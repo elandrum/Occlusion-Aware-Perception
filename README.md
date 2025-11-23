@@ -17,6 +17,7 @@ A modular CARLA simulation framework designed to test and evaluate autonomous ve
 ├── capture_waypoints.py       # Tool to capture positions
 ├── vehicles.json             # Vehicle configuration
 ├── pedestrians.json          # Pedestrian configuration
+├── requirements.txt          # Python dependencies
 └── output/                   # Captured frames and videos
 ```
 
@@ -137,9 +138,57 @@ The camera automatically captures frames from the ego vehicle's front camera dur
 
 ## Requirements
 
-- CARLA Simulator
-- Python 3.7+
-- carla package
-- opencv-python (for video compilation)
-- numpy
-- pygame (optional, for capture tool)
+### Prerequisites
+
+- **CARLA Simulator** (version 0.9.15 or compatible)
+  - Download from [CARLA Releases](https://github.com/carla-simulator/carla/releases)
+  - Make sure CARLA server is running before executing scenarios
+
+#### Running CARLA with Docker
+
+For GPU-enabled systems with NVIDIA Docker support:
+
+```bash
+# Pull CARLA Docker image
+docker pull carlasim/carla:0.9.15
+
+# Run CARLA server
+docker run \
+    --runtime=nvidia \
+    --net=host \
+    --user=$(id -u):$(id -g) \
+    --env=DISPLAY=$DISPLAY \
+    --env=NVIDIA_VISIBLE_DEVICES=all \
+    --env=NVIDIA_DRIVER_CAPABILITIES=all \
+    --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
+    carlasim/carla:0.9.15 \
+    bash -c "/home/carla/CarlaUE4.sh -nosound"
+```
+
+**Note:** Make sure your system has NVIDIA Docker runtime installed and X11 display is properly configured.
+
+### Python Dependencies
+
+- Python 3.9+
+
+Install required packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+**Core packages:**
+- `numpy>=1.21.0` - Numerical operations
+- `opencv-python>=4.5.0` - Video compilation from frames
+
+**Optional packages:**
+- `pygame>=2.0.0` - For interactive waypoint capture tool
+
+**CARLA Python API:**
+- The `carla` package must be installed from your CARLA distribution
+- Typically found in `CARLA_ROOT/PythonAPI/carla/dist/carla-x.x.x-py3.x-xxx.egg`
+- Add to PYTHONPATH or install using:
+  ```bash
+  # Example for CARLA 0.9.15
+  easy_install CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.15-py3.7-linux-x86_64.egg
+  ```
