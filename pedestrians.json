@@ -1,0 +1,22 @@
+{
+  "pedestrians": [
+    {
+      "location": {
+        "x": -3.8,
+        "y": 10.54,
+        "z": 1.03
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 270.0,
+        "roll": 0.0
+      },
+      "target_location": {
+        "x": -3.8,
+        "y": -5.0,
+        "z": 1.03
+      },
+      "speed_ms": 0.82
+    }
+  ]
+}
