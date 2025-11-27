@@ -1,0 +1,43 @@
+{
+  "ego_vehicle": {
+    "location": {
+      "x": -25.98,
+      "y": 3.21,
+      "z": 0.98
+    },
+    "rotation": {
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "roll": 0.0
+    },
+    "speed_kmh": 26
+  },
+  "trucks": [
+    {
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": 2.32,
+        "y": 6.5,
+        "z": 2.05
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      }
+    },
+    {
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": -8.51,
+        "y": 6.5,
+        "z": 2.13
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# CARLA Simulation Requirements
+
+# CARLA Python API (install from CARLA distribution)
+carla==0.9.15
+
+# Core dependencies
+numpy
+opencv-python
+
+# Optional dependencies
+pygame  # For interactive waypoint capture tool
