@@ -34,6 +34,7 @@ Occlusion-Aware-Perception/
 
 ## 1. Python / Conda Setup
 
+```
 module purge
 module load conda
 conda init bash
@@ -47,57 +48,58 @@ conda create -n carla python=3.8 conda -c conda-forge
 conda activate carla
 python --version
 which python
-
+```
 ---
 
 ## 2. Acquire a GPU Node
-
+```
 salloc --time=2:00:00 --cpus-per-task=8 --mem=32GB --account=jdeshmuk_786 --partition=gpu --gres=gpu:1
 nvidia-smi
-
+```
 ---
 
 ## 3. Load Apptainer + Conda
-
+```
 module load conda
 module load apptainer
 source ~/.bash_profile
 conda activate carla
-
+```
 ---
 
 ## 4. Launch CARLA via Apptainer
-
+```
 singularity exec --nv /project/jdeshmuk_786/carla-0.9.15_4.11.sif bash
-
+```
 Inside container:
-
+```
 source ~/.bashrc
 conda activate carla
 pip install -U carla==0.9.15
-
+```
 ---
 
 ## 5. Verify CARLA Works
-
+```
 cd /home/carla/
 bash ./CarlaUE4.sh -nosound -vulkan -RenderOffScreen &
 
 cd PythonAPI/util
 python3 test_connection.py
-
+```
 Expected:
+```
 CARLA 0.9.15 connected at 127.0.0.1:2000.
-
+```
 ---
 
 # Running the Occlusion Simulator
 
 Inside same container after CARLA is running:
-
+```
 cd ~/Occlusion-Aware-Perception
 PYTHONPATH=. python3 -m occl_simulator scenario1
-
+```
 This:
 - Connects to CARLA
 - Loads Town05
@@ -154,20 +156,20 @@ FOV ~110°, 1080p, mounted front of vehicle.
 # Adding New Scenarios
 
 1. Add:
-
+```
 test_data/my_scenario_vehicles.json  
 test_data/my_scenario_peds.json
-
+```
 2. Add file:
-
+```
 occl_simulator/my_scenario.py
-
+```
 3. Register inside occl_simulator/__main__.py
 
 Run:
-
+```
 PYTHONPATH=. python3 -m occl_simulator my_scenario
-
+```
 ---
 
 # Requirements
