@@ -6,6 +6,8 @@ A modular CARLA simulation framework designed to test and evaluate autonomous ve
 
 ## Project Structure
 
+```markdown
+
 Occlusion-Aware-Perception/
 ├── occl_controller/
 │   ├── controller.py           # Ego vehicle control logic (ACC / occlusion-aware logic)
@@ -25,7 +27,7 @@ Occlusion-Aware-Perception/
 │   └── __init__.py
 ├── requirements.txt
 └── README.md
-
+```
 ---
 
 # HPC SETUP (DISCOVERY)
