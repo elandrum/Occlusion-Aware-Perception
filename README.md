@@ -1,94 +1,116 @@
 # Occlusion-Aware-Perception
 
-A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception systems in challenging occlusion scenarios. This project creates realistic urban environments where pedestrians and obstacles are strategically positioned to occlude critical objects from the ego vehicle's field of view, enabling researchers to study and improve perception algorithms under adverse visibility conditions.
+A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception and control in challenging occlusion scenarios. The current baseline scenario places a pedestrian crossing between two parked trucks, creating a realistic occluded-crosswalk situation for the ego vehicle.
 
+---
 
 ## Project Structure
 
-```
-513_Proj/
-├── main.py                    # Main entry point - runs scenarios
-├── scenario1.py               # Scenario 1: Pedestrian crossing collision
-├── scenario_config.py         # Configuration loader
-├── vehicle_controller.py      # Ego vehicle control logic
-├── pedestrian_controller.py   # Pedestrian spawning and movement
-├── scenery_manager.py         # Static actors (trucks, props)
-├── camera_manager.py          # Camera sensor and video recording
-├── capture_waypoints.py       # Tool to capture positions
-├── vehicles.json             # Vehicle configuration
-├── pedestrians.json          # Pedestrian configuration
-├── requirements.txt          # Python dependencies
-└── output/                   # Captured frames and videos
-```
+Occlusion-Aware-Perception/
+├── occl_controller/
+│   ├── controller.py           # Ego vehicle control logic (ACC / occlusion-aware logic)
+│   └── __init__.py
+├── occl_simulator/
+│   ├── __main__.py             # Main entry point - runs scenarios
+│   ├── scenario1.py            # Scenario 1: Pedestrian crossing between two trucks
+│   ├── config.py               # Scenario configuration loader
+│   ├── actors_static.py        # Static actors (trucks, props)
+│   ├── actors_peds.py          # Pedestrian spawning and movement
+│   ├── camera.py               # Camera sensor and video recording
+│   └── capture_waypoints.py    # Tool to capture positions in CARLA
+├── test_data/
+│   ├── scenario1_vehicles.json # Vehicle configuration for scenario 1
+│   └── scenario1_peds.json     # Pedestrian configuration for scenario 1
+├── tests/
+│   └── __init__.py
+├── requirements.txt
+└── README.md
 
-## Files Overview
+---
 
-### Core Modules
+# HPC SETUP (DISCOVERY)
 
-- **`main.py`**: Main entry point that loads and runs scenarios
-- **`scenario1.py`**: First scenario - pedestrian crossing collision
-- **`scenario_config.py`**: Loads and manages JSON configuration files
-- **`vehicle_controller.py`**: Controls ego vehicle behavior and logic
-- **`pedestrian_controller.py`**: Handles pedestrian spawning and movement
-- **`scenery_manager.py`**: Spawns and manages static scenery (trucks, vehicles)
-- **`camera_manager.py`**: Manages front camera sensor, captures frames, compiles video
+## 1. Python / Conda Setup
 
-### Configuration Files
+module purge
+module load conda
+conda init bash
+conda config --set auto_activate_base false
+source ~/.bashrc
 
-- **`vehicles.json`**: Defines ego vehicle, trucks positions, rotations, and speeds
-- **`pedestrians.json`**: Defines pedestrian positions, targets, and speeds
+conda activate base
+conda create -n carla python=3.8 conda -c conda-forge
+~/.conda/envs/carla/condabin/conda init bash
 
-### Tools
+conda activate carla
+python --version
+which python
 
-- **`capture_waypoints.py`**: Interactive tool to capture positions in CARLA
+---
 
-## Usage
+## 2. Acquire a GPU Node
 
-### Running Scenarios
+salloc --time=2:00:00 --cpus-per-task=8 --mem=32GB --account=jdeshmuk_786 --partition=gpu --gres=gpu:1
+nvidia-smi
 
-```bash
-# Run scenario 1
-python main.py scenario1
+---
 
-# General format
-python main.py <scenario_name>
-```
+## 3. Load Apptainer + Conda
 
-### Running Scenario Directly (Setup Only)
+module load conda
+module load apptainer
+source ~/.bash_profile
+conda activate carla
 
-```bash
-# Run scenario file directly - spawns actors but no movement logic
-python scenario1.py
-```
+---
 
-**Note:** Running a scenario file directly only sets up the scene (spawns all actors) without executing movement logic. Useful for inspecting actor placement and verifying positions. For full simulation with movement, use `python main.py scenario1`.
+## 4. Launch CARLA via Apptainer
 
-### Capturing New Positions
+singularity exec --nv /project/jdeshmuk_786/carla-0.9.15_4.11.sif bash
 
-```bash
-python capture_waypoints.py
-```
+Inside container:
 
-Press keys to capture positions:
-- **E** - Capture ego vehicle position
-- **T** - Capture truck position
-- **P** - Capture pedestrian position
-- **S** - Save to JSON files
+source ~/.bashrc
+conda activate carla
+pip install -U carla==0.9.15
 
+---
 
-## Example Scenarios
+## 5. Verify CARLA Works
 
-### Scenario 1: Pedestrian Crossing Collision
-- Ego vehicle drives at 30 km/h
-- Pedestrian crosses street (not at crosswalk)
-- Tests collision detection
-- Located in: `scenario1.py`
+cd /home/carla/
+bash ./CarlaUE4.sh -nosound -vulkan -RenderOffScreen &
 
-## Configuration
+cd PythonAPI/util
+python3 test_connection.py
 
-### Vehicle Configuration (`vehicles.json`)
+Expected:
+CARLA 0.9.15 connected at 127.0.0.1:2000.
 
-```json
+---
+
+# Running the Occlusion Simulator
+
+Inside same container after CARLA is running:
+
+cd ~/Occlusion-Aware-Perception
+PYTHONPATH=. python3 -m occl_simulator scenario1
+
+This:
+- Connects to CARLA
+- Loads Town05
+- Spawns ego vehicle + trucks + pedestrian
+- Runs default controller
+- Records video
+
+Stop with Ctrl+C.
+
+---
+
+# Configuration Files
+
+## scenario1_vehicles.json
+
 {
   "ego_vehicle": {
     "location": {"x": -25.98, "y": 2.21, "z": 0.98},
@@ -103,11 +125,9 @@ Press keys to capture positions:
     }
   ]
 }
-```
 
-### Pedestrian Configuration (`pedestrians.json`)
+## scenario1_peds.json
 
-```json
 {
   "pedestrians": [
     {
@@ -118,77 +138,43 @@ Press keys to capture positions:
     }
   ]
 }
-```
 
+---
 
-## Video Recording
+# Camera / Video Output
 
-The camera automatically captures frames from the ego vehicle's front camera during simulation. When you stop the simulation (Ctrl+C), the frames are compiled into a video.
+Frames → output/frames_<timestamp>/  
+Video → output/video_<timestamp>.mp4  
+FOV ~110°, 1080p, mounted front of vehicle.
 
-**Output:**
-- Frames: `output/frames_<timestamp>/frame_XXXXXX.png`
-- Video: `output/video_<timestamp>.mp4`
-- Resolution: 1920x1080 @ 30fps
+---
 
-**Camera Position:**
-- Mounted on front of ego vehicle
-- Height: 1.0m above vehicle center
-- Distance: 2.5m forward from vehicle center
-- Field of View: 110 degrees
+# Adding New Scenarios
 
-## Requirements
+1. Add:
 
-### Prerequisites
+test_data/my_scenario_vehicles.json  
+test_data/my_scenario_peds.json
 
-- **CARLA Simulator** (version 0.9.15 or compatible)
-  - Download from [CARLA Releases](https://github.com/carla-simulator/carla/releases)
-  - Make sure CARLA server is running before executing scenarios
+2. Add file:
 
-#### Running CARLA with Docker
+occl_simulator/my_scenario.py
 
-For GPU-enabled systems with NVIDIA Docker support:
+3. Register inside occl_simulator/__main__.py
 
-```bash
-# Pull CARLA Docker image
-docker pull carlasim/carla:0.9.15
+Run:
 
-# Run CARLA server
-docker run \
-    --runtime=nvidia \
-    --net=host \
-    --user=$(id -u):$(id -g) \
-    --env=DISPLAY=$DISPLAY \
-    --env=NVIDIA_VISIBLE_DEVICES=all \
-    --env=NVIDIA_DRIVER_CAPABILITIES=all \
-    --volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
-    carlasim/carla:0.9.15 \
-    bash -c "/home/carla/CarlaUE4.sh -nosound"
-```
+PYTHONPATH=. python3 -m occl_simulator my_scenario
 
-**Note:** Make sure your system has NVIDIA Docker runtime installed and X11 display is properly configured.
+---
 
-### Python Dependencies
+# Requirements
 
-- Python 3.9+
+- CARLA 0.9.15
+- Python 3.8
+- GPU node on HPC
+- Apptainer container
+- Python dependencies in requirements.txt
+- CARLA egg importable: python3 -c "import carla"
 
-Install required packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-**Core packages:**
-- `numpy>=1.21.0` - Numerical operations
-- `opencv-python>=4.5.0` - Video compilation from frames
-
-**Optional packages:**
-- `pygame>=2.0.0` - For interactive waypoint capture tool
-
-**CARLA Python API:**
-- The `carla` package must be installed from your CARLA distribution
-- Typically found in `CARLA_ROOT/PythonAPI/carla/dist/carla-x.x.x-py3.x-xxx.egg`
-- Add to PYTHONPATH or install using:
-  ```bash
-  # Example for CARLA 0.9.15
-  easy_install CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.15-py3.7-linux-x86_64.egg
-  ```
+---

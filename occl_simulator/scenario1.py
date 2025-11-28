@@ -8,9 +8,9 @@ Logic: Vehicle approaches, pedestrian walks across
 
 import carla
 
-from scenario_config import ScenarioConfig
-from scenery_manager import SceneryManager
-from pedestrian_controller import PedestrianController
+from .config import ScenarioConfig
+from .actors_static import SceneryManager
+from .actors_peds import PedestrianController
 
 
 class Scenario1:
@@ -27,7 +27,7 @@ class Scenario1:
         self.pedestrian_ctrl = PedestrianController(world, blueprint_library)
         
         # Configuration files for this scenario
-        self.config = ScenarioConfig('vehicles.json', 'pedestrians.json')
+        self.config = ScenarioConfig('scenario1')
         
         # Store spawned actors
         self.ego_vehicle = None
