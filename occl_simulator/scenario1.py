@@ -64,7 +64,8 @@ class Scenario1:
         return {
             'ego_vehicle': self.ego_vehicle,
             'ego_speed_kmh': self.ego_speed_kmh,
-            'pedestrian_ctrl': self.pedestrian_ctrl
+            'pedestrian_ctrl': self.pedestrian_ctrl,
+	  # 'occluders': self.scenery.get_occluders(),
         }
     
     def cleanup(self):
