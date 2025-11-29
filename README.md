@@ -151,6 +151,19 @@ Frames → output/frames_<timestamp>/
 Video → output/video_<timestamp>.mp4  
 FOV ~110°, 1080p, mounted front of vehicle.
 
+# Occlusion Grid & Occluders
+
+The controller builds a 2D ego–centric occlusion grid every tick and writes it out as a separate video (output/grid_<timestamp>.mp4). Each cell in this grid is marked as either “free” or “occluded” based on simple ray–casting from the ego vehicle to that cell.
+
+Which actors count as occluders?
+
+By default, if a scenario does not specify anything, the controller treats all vehicles except the ego as occluders. Internally it walks world.get_actors().filter("vehicle.*"), skips the ego, and uses their CARLA bounding boxes to block rays.
+
+A scenario can optionally override this by returning an occluders list in its scenario_data dict (for example, a list of specific truck actors). In that case, only the actors in this list are used as occluders.
+
+Actors are only used as occluders if they have a bounding_box attribute (typically vehicles, trucks, large static props, etc.).
+
+For most new scenarios you don’t need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., “only these two trucks should occlude, parked cars should not”) do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
 ---
 
 # Adding New Scenarios
@@ -171,6 +184,8 @@ Run:
 PYTHONPATH=. python3 -m occl_simulator my_scenario
 ```
 ---
+
+
 
 # Requirements
 
