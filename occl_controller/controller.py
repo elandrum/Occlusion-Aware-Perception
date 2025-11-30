@@ -345,18 +345,37 @@ class OcclusionAwareController(VehicleController):
         self.pedestrian_in_path = False  # Flag for emergency stop
         self.closest_ped_distance = float('inf')
         
+        # Vehicle detection settings (for oncoming traffic)
+        self.veh_stop_distance = 20.0    # Stop if vehicle within this distance (meters)
+        self.veh_caution_distance = 35.0 # Slow down if vehicle within this distance
+        self.detected_vehicles = []      # List of detected vehicles with bounding boxes
+        self.oncoming_vehicle = False    # Flag for oncoming vehicle emergency
+        self.closest_veh_distance = float('inf')
+        
         # Vision-based detection
         self.use_vision_detection = use_vision_detection
         self.ped_detector = None
+        self.veh_detector = None         # Separate vehicle detector
         self.camera_manager = None       # Will be set externally
         
         if use_vision_detection:
             try:
                 from .pedestrian_detector import create_detector
                 self.ped_detector = create_detector(use_yolo=True, model_name='yolov8n.pt', confidence=0.5)
-                print("✓ Vision-based pedestrian detection enabled (YOLO + Depth)")
+                print("✓ Pedestrian detection enabled (YOLO + Depth)")
             except Exception as e:
-                print(f"⚠ Vision detection failed to load: {e}")
+                print(f"⚠ Pedestrian detection failed to load: {e}")
+                self.ped_detector = None
+            
+            try:
+                from .vehicle_detector import create_vehicle_detector
+                self.veh_detector = create_vehicle_detector(use_yolo=True, model_name='yolov8n.pt', confidence=0.5)
+                print("✓ Vehicle detection enabled (YOLO + Depth)")
+            except Exception as e:
+                print(f"⚠ Vehicle detection failed to load: {e}")
+                self.veh_detector = None
+            
+            if self.ped_detector is None and self.veh_detector is None:
                 print("  Falling back to ground-truth detection")
                 self.use_vision_detection = False
         
@@ -365,6 +384,10 @@ class OcclusionAwareController(VehicleController):
         self.target_speed_ms = 0.0
         self.risk_breakdown = {}
         self.frames_in_danger = 0
+        
+        # External steering control (for turn scenarios)
+        self.external_steer = None  # Set externally to override steering
+        self.use_external_steering = False
         
         # CNN-like feature extraction (simplified - could be replaced with actual CNN)
         self._init_risk_model()
@@ -383,13 +406,32 @@ class OcclusionAwareController(VehicleController):
         """Set the camera manager for vision-based detection"""
         self.camera_manager = camera_manager
         
-        if self.ped_detector and camera_manager:
+        if camera_manager:
             intrinsics = camera_manager.get_camera_intrinsics()
-            self.ped_detector.set_camera_intrinsics(
-                intrinsics['width'],
-                intrinsics['height'],
-                intrinsics['fov']
-            )
+            
+            if self.ped_detector:
+                self.ped_detector.set_camera_intrinsics(
+                    intrinsics['width'],
+                    intrinsics['height'],
+                    intrinsics['fov']
+                )
+            
+            if self.veh_detector:
+                self.veh_detector.set_camera_intrinsics(
+                    intrinsics['width'],
+                    intrinsics['height'],
+                    intrinsics['fov']
+                )
+    
+    def set_external_steering(self, steer_value):
+        """Set external steering value (for turn scenarios)"""
+        self.external_steer = steer_value
+        self.use_external_steering = True
+    
+    def clear_external_steering(self):
+        """Clear external steering control"""
+        self.external_steer = None
+        self.use_external_steering = False
     
     def _init_risk_model(self):
         """
@@ -592,7 +634,7 @@ class OcclusionAwareController(VehicleController):
     def _detect_pedestrians_vision(self):
         """
         Vision-based pedestrian detection using YOLO + Depth camera.
-        Only detects pedestrians that are VISIBLE to the camera.
+        Detects pedestrians that are VISIBLE to the camera.
         
         Returns:
             - ped_risk: Risk level based on pedestrian proximity (0.0 to 1.0)
@@ -609,7 +651,7 @@ class OcclusionAwareController(VehicleController):
         if rgb_frame is None:
             return 0.0, False, []
         
-        # Run YOLO detection
+        # Run YOLO detection for pedestrians
         detections = self.ped_detector.detect(rgb_frame)
         
         if not detections:
@@ -621,7 +663,7 @@ class OcclusionAwareController(VehicleController):
         # Estimate 3D positions using depth
         positions_3d = self.ped_detector.estimate_3d_positions(detections, depth_frame)
         
-        # Determine which pedestrians are in path
+        # Check which pedestrians are in path
         peds_in_path, should_stop, closest_dist = self.ped_detector.get_pedestrians_in_path(
             positions_3d,
             lane_width=3.5,
@@ -645,24 +687,106 @@ class OcclusionAwareController(VehicleController):
                 'forward_dist': pos['z'],
                 'lateral_dist': pos['lateral_offset'],
                 'in_path': pos.get('in_path', False),
-                'detection': pos['detection'],  # YOLO detection info
-                'bbox': {
-                    'width': 0.6,
-                    'height': 1.8
-                }
+                'detection': pos['detection'],
+                'bbox': {'width': 0.6, 'height': 1.8}
             }
             detected_peds.append(ped_info)
         
         # Draw detection boxes on frame for visualization
         if rgb_frame is not None:
             overlay = self.ped_detector.draw_detections(rgb_frame, positions_3d)
-            self.camera_manager.set_detection_overlay(overlay)
+            # Will merge with vehicle overlay later if available
+            self._ped_overlay = overlay
         
         self.detected_pedestrians = detected_peds
         self.pedestrian_in_path = should_stop
-        self.closest_ped_distance = closest_dist if closest_dist < float('inf') else float('inf')
+        self.closest_ped_distance = closest_dist
         
         return ped_risk, should_stop, detected_peds
+    
+    def _detect_vehicles_vision(self):
+        """
+        Vision-based vehicle detection using YOLO + Depth camera.
+        Detects oncoming vehicles that are VISIBLE to the camera.
+        
+        Returns:
+            - veh_risk: Risk level based on vehicle proximity (0.0 to 1.0)
+            - should_stop: Boolean - True if emergency stop needed
+            - detected_vehs: List of dicts with vehicle info for visualization
+        """
+        if self.camera_manager is None or self.veh_detector is None:
+            return 0.0, False, []
+        
+        # Get raw RGB frame (without HUD)
+        rgb_frame = self.camera_manager.get_raw_frame()
+        depth_frame = self.camera_manager.get_depth_frame()
+        
+        if rgb_frame is None:
+            return 0.0, False, []
+        
+        # Run YOLO detection for vehicles
+        detections = self.veh_detector.detect(rgb_frame)
+        
+        if not detections:
+            self.detected_vehicles = []
+            self.oncoming_vehicle = False
+            self.closest_veh_distance = float('inf')
+            return 0.0, False, []
+        
+        # Estimate 3D positions using depth
+        positions_3d = self.veh_detector.estimate_3d_positions(detections, depth_frame)
+        
+        # Get all vehicle threats - ONLY check for ONCOMING vehicles
+        # Don't stop for vehicles ahead moving in same direction (trucks)
+        threats = self.veh_detector.get_all_vehicle_threats(
+            positions_3d,
+            lane_width=2.0,              # Narrow lane to avoid false positives from adjacent trucks
+            same_lane_stop=8.0,          # Only stop for very close same-lane vehicles
+            check_oncoming=True,
+            oncoming_lateral_range=(-8.0, -1.0),  # Look for oncoming in left lanes (not center)
+            oncoming_stop_distance=self.veh_stop_distance
+        )
+        
+        # Only stop for ONCOMING vehicles, not same-direction vehicles
+        should_stop = threats['should_stop_oncoming']
+        closest_dist = threats['closest_oncoming_distance'] if threats['oncoming_vehicles'] else float('inf')
+        
+        # Calculate vehicle risk - only for oncoming vehicles
+        veh_risk = 0.0
+        if should_stop and threats['oncoming_vehicles']:
+            veh_risk = 1.0
+            print(f"\n🚗 ONCOMING VEHICLE DETECTED (YOLO)! Distance: {closest_dist:.1f}m - STOPPING!")
+        elif closest_dist < self.veh_caution_distance and threats['oncoming_vehicles']:
+            proximity_risk = 1.0 - (closest_dist - self.veh_stop_distance) / (self.veh_caution_distance - self.veh_stop_distance)
+            veh_risk = max(0, proximity_risk * 0.8)
+        
+        # Convert to format expected by rest of system
+        detected_vehs = []
+        for pos in positions_3d:
+            veh_info = {
+                'distance': pos['distance'],
+                'forward_dist': pos['z'],
+                'lateral_dist': pos['lateral_offset'],
+                'in_path': pos.get('in_path', False),
+                'threat_type': pos.get('threat_type', ''),
+                'vehicle_type': pos.get('vehicle_type', 'car'),
+                'detection': pos['detection'],
+                'bbox': {'width': 2.0, 'height': 1.5}
+            }
+            detected_vehs.append(veh_info)
+        
+        # Draw detection boxes on frame for visualization
+        if rgb_frame is not None:
+            # Use pedestrian overlay as base if available
+            base_frame = getattr(self, '_ped_overlay', rgb_frame)
+            overlay = self.veh_detector.draw_detections(base_frame, positions_3d)
+            self.camera_manager.set_detection_overlay(overlay)
+        
+        self.detected_vehicles = detected_vehs
+        self.oncoming_vehicle = len(threats['oncoming_vehicles']) > 0
+        self.closest_veh_distance = closest_dist
+        
+        return veh_risk, should_stop, detected_vehs
     
     def _detect_pedestrians_ground_truth(self):
         """
@@ -767,6 +891,21 @@ class OcclusionAwareController(VehicleController):
         else:
             return self._detect_pedestrians_ground_truth()
     
+    def _detect_vehicles(self):
+        """
+        Detect vehicles - uses vision-based detection when enabled.
+        
+        Returns:
+            - veh_risk: Risk level based on vehicle proximity (0.0 to 1.0)
+            - should_stop: Boolean - True if emergency stop needed
+            - detected_vehs: List of dicts with vehicle info for visualization
+        """
+        if self.use_vision_detection and self.veh_detector and self.camera_manager:
+            return self._detect_vehicles_vision()
+        else:
+            # No ground-truth vehicle detection fallback for now
+            return 0.0, False, []
+    
     def get_pedestrian_info(self):
         """Return detected pedestrian info for HUD/camera overlay"""
         return {
@@ -815,20 +954,25 @@ class OcclusionAwareController(VehicleController):
         
         if speed_error > 0.5:
             # Need to speed up
-            self.ego_control.throttle = min(0.8, 0.3 + speed_error * 0.2)
+            self.ego_control.throttle = float(min(0.8, 0.3 + speed_error * 0.2))
             self.ego_control.brake = 0.0
         elif speed_error < -0.5:
             # Need to slow down
             self.ego_control.throttle = 0.0
             # Proportional braking
-            brake_strength = min(0.9, abs(speed_error) * 0.3)
+            brake_strength = float(min(0.9, abs(speed_error) * 0.3))
             self.ego_control.brake = brake_strength
         else:
             # Maintain speed
             self.ego_control.throttle = 0.2
             self.ego_control.brake = 0.0
         
-        self.ego_control.steer = 0.0
+        # Use external steering if provided (for turn scenarios), otherwise 0
+        if self.use_external_steering and self.external_steer is not None:
+            self.ego_control.steer = float(self.external_steer)
+        else:
+            self.ego_control.steer = 0.0
+        
         self.ego_vehicle.apply_control(self.ego_control)
     
     def _draw_pedestrians_on_grid(self, img, center_px, scale):
@@ -1030,14 +1174,21 @@ class OcclusionAwareController(VehicleController):
         # 4. Detect pedestrians
         ped_risk, ped_should_stop, detected_peds = self._detect_pedestrians()
         
-        # 5. Fuse risks
+        # 5. Detect vehicles (oncoming traffic, etc.)
+        veh_risk, veh_should_stop, detected_vehs = self._detect_vehicles()
+        
+        # Combined should_stop
+        should_stop = ped_should_stop or veh_should_stop
+        
+        # 6. Fuse risks
         occlusion_risk = features['weighted_risk']
         
         # Combine all risk sources
         combined_risk = max(
             occlusion_risk,
             social_risk * self.social_cue_weight,
-            ped_risk  # Pedestrian risk takes priority
+            ped_risk,
+            veh_risk  # Vehicle risk (oncoming traffic)
         )
         
         # Temporal smoothing (avoid sudden changes)
@@ -1048,16 +1199,20 @@ class OcclusionAwareController(VehicleController):
         # Use max of recent risks for safety
         self.current_risk = max(self.risk_history) if self.risk_history else combined_risk
         
-        # 6. Get minimum forward distance
+        # 7. Get minimum forward distance
         min_forward_dist = features['min_distances'].get('forward', float('inf'))
         
         # If pedestrian detected in path, use pedestrian distance as constraint
         if self.pedestrian_in_path and self.closest_ped_distance < min_forward_dist:
             min_forward_dist = self.closest_ped_distance
         
-        # 7. Compute target speed
-        if ped_should_stop:
-            # EMERGENCY STOP for pedestrian
+        # If oncoming vehicle detected, use vehicle distance as constraint
+        if self.oncoming_vehicle and self.closest_veh_distance < min_forward_dist:
+            min_forward_dist = self.closest_veh_distance
+        
+        # 8. Compute target speed
+        if should_stop:
+            # EMERGENCY STOP for pedestrian or oncoming vehicle
             self.target_speed_ms = 0.0
         else:
             self.target_speed_ms = self._compute_target_speed(self.current_risk, min_forward_dist)
@@ -1071,6 +1226,8 @@ class OcclusionAwareController(VehicleController):
                 print(f"   Adjacent vehicle braking!")
             if detected_peds:
                 print(f"   Pedestrians detected: {len(detected_peds)}")
+            if detected_vehs:
+                print(f"   Vehicles detected: {len(detected_vehs)}")
             print(f"   Target speed: {self.target_speed_ms*3.6:.1f} km/h")
         
         if self.current_risk >= self.risk_caution:
@@ -1078,12 +1235,12 @@ class OcclusionAwareController(VehicleController):
         else:
             self.frames_in_danger = 0
         
-        # 8. Apply control
+        # 9. Apply control
         if not self.ego_moving:
             return
         
-        # Emergency stop for pedestrian overrides everything
-        if ped_should_stop:
+        # Emergency stop for pedestrian/vehicle overrides everything
+        if should_stop:
             self.ego_control.throttle = 0.0
             self.ego_control.brake = 1.0
             self.ego_vehicle.apply_control(self.ego_control)

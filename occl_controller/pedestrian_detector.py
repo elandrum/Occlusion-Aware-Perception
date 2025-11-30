@@ -81,7 +81,6 @@ class PedestrianDetector:
         self.image_height = height
         
         # Calculate focal length from FOV
-        # fx = width / (2 * tan(fov/2))
         fov_rad = math.radians(fov_degrees)
         self.fx = width / (2.0 * math.tan(fov_rad / 2.0))
         self.fy = self.fx  # Assuming square pixels
@@ -105,10 +104,7 @@ class PedestrianDetector:
             - confidence: detection confidence
             - center: (cx, cy) center pixel
         """
-        if rgb_frame is None:
-            return []
-        
-        if self.model is None:
+        if rgb_frame is None or self.model is None:
             return []
         
         detections = []
@@ -124,18 +120,15 @@ class PedestrianDetector:
                     continue
                 
                 for i in range(len(boxes)):
-                    # Get confidence
                     conf = float(boxes.conf[i])
                     
                     if conf < self.confidence_threshold:
                         continue
                     
-                    # Get class (should be person=0)
                     cls = int(boxes.cls[i])
                     if cls != self.person_class_id:
                         continue
                     
-                    # Get bounding box
                     x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy()
                     
                     detection = {
@@ -173,12 +166,10 @@ class PedestrianDetector:
             cx, cy = det['center']
             x1, y1, x2, y2 = det['bbox']
             
-            # Sample depth at multiple points in the bounding box for robustness
             # Use lower center (feet area) for more accurate ground distance
             sample_y = min(int(y2 - det['height'] * 0.1), depth_frame.shape[0] - 1)
             sample_x = cx
             
-            # Get depth value (in meters)
             # Sample a small region and take median for robustness
             y_start = max(0, sample_y - 5)
             y_end = min(depth_frame.shape[0], sample_y + 5)
@@ -196,21 +187,17 @@ class PedestrianDetector:
             depth = np.median(valid_depths)
             
             # Back-project to 3D using pinhole camera model
-            # X = (u - cx) * Z / fx
-            # Y = (v - cy) * Z / fy
-            # Z = depth
-            
             z = depth  # Forward distance
             x = (cx - self.cx) * z / self.fx  # Right (+) / Left (-)
             y = (cy - self.cy) * z / self.fy  # Down (+) / Up (-)
             
             position_3d = {
-                'x': x,           # Right/left in camera frame
-                'y': y,           # Down/up in camera frame  
-                'z': z,           # Forward distance
-                'distance': z,    # Simplified: use forward distance
+                'x': x,
+                'y': y,
+                'z': z,
+                'distance': z,
                 'detection': det,
-                'lateral_offset': x  # How far left/right of center
+                'lateral_offset': x
             }
             positions_3d.append(position_3d)
         
@@ -238,11 +225,9 @@ class PedestrianDetector:
         half_lane = lane_width / 2.0
         
         for pos in positions_3d:
-            # Check if pedestrian is ahead (positive z)
             if pos['z'] <= 0:
                 continue
             
-            # Check if pedestrian is within lane width
             if abs(pos['lateral_offset']) < half_lane:
                 pos['in_path'] = True
                 pedestrians_in_path.append(pos)
@@ -258,53 +243,37 @@ class PedestrianDetector:
         return pedestrians_in_path, should_stop, closest_distance
     
     def draw_detections(self, frame, positions_3d=None):
-        """
-        Draw bounding boxes and labels on frame.
-        
-        Args:
-            frame: BGR numpy array to draw on
-            positions_3d: Optional 3D positions for distance labels
-            
-        Returns:
-            Frame with detections drawn
-        """
+        """Draw bounding boxes and labels on frame."""
         import cv2
         
         frame = frame.copy()
         
-        # Use 3D positions if available, otherwise use last detections
         if positions_3d:
             for pos in positions_3d:
                 det = pos['detection']
                 x1, y1, x2, y2 = det['bbox']
                 
-                # Color based on whether in path
                 if pos.get('in_path', False):
                     color = (0, 0, 255)  # Red - in path
                     thickness = 3
                 else:
-                    color = (0, 255, 255)  # Yellow - detected but not in path
+                    color = (0, 255, 255)  # Yellow - not in path
                     thickness = 2
                 
-                # Draw bounding box
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                 
-                # Draw label with distance
                 label = f"PED {pos['distance']:.1f}m"
                 label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                 
-                # Background for label
                 cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), 
                              (x1 + label_size[0], y1), color, -1)
                 cv2.putText(frame, label, (x1, y1 - 5), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
-                # Confidence
                 conf_text = f"{det['confidence']:.0%}"
                 cv2.putText(frame, conf_text, (x1, y2 + 20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         else:
-            # Just draw detections without 3D info
             for det in self.last_detections:
                 x1, y1, x2, y2 = det['bbox']
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
@@ -317,10 +286,7 @@ class PedestrianDetector:
 
 
 class FallbackDetector:
-    """
-    Fallback detector when YOLO is not available.
-    Uses simple color/motion detection (less accurate but no dependencies).
-    """
+    """Fallback detector when YOLO is not available."""
     
     def __init__(self):
         self.last_detections = []
@@ -331,7 +297,6 @@ class FallbackDetector:
         pass
     
     def detect(self, rgb_frame):
-        # No detection without ML model
         return []
     
     def estimate_3d_positions(self, detections, depth_frame):
@@ -345,17 +310,7 @@ class FallbackDetector:
 
 
 def create_detector(use_yolo=True, model_name='yolov8n.pt', confidence=0.5):
-    """
-    Factory function to create appropriate detector.
-    
-    Args:
-        use_yolo: Whether to use YOLO (if available)
-        model_name: YOLO model name
-        confidence: Detection confidence threshold
-        
-    Returns:
-        PedestrianDetector or FallbackDetector instance
-    """
+    """Factory function to create appropriate detector."""
     if use_yolo and YOLO_AVAILABLE:
         return PedestrianDetector(model_name, confidence)
     else:

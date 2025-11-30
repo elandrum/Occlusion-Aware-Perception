@@ -99,10 +99,22 @@ class TurningVehicleController:
             velocity = vehicle.get_velocity()
             current_speed = math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
             
-            if current_speed < target_speed_ms:
-                control.throttle = 0.7
+            speed_diff = target_speed_ms - current_speed
+            
+            if speed_diff > 5.0:
+                # Far below target - full throttle
+                control.throttle = 1.0
+                control.brake = 0.0
+            elif speed_diff > 1.0:
+                # Below target - high throttle
+                control.throttle = 0.8
+                control.brake = 0.0
+            elif speed_diff > 0:
+                # Slightly below - moderate throttle
+                control.throttle = 0.5
                 control.brake = 0.0
             else:
+                # At or above target - maintain
                 control.throttle = 0.3
                 control.brake = 0.0
             
@@ -149,6 +161,7 @@ class EgoTurnController:
         self.turn_target = None
         self.is_turning = False
         self.turn_complete = False
+        self._computed_steer = 0.0  # Computed steering for external control
         
     def set_ego_vehicle(self, vehicle, speed_kmh, turn_config=None):
         """Set the ego vehicle with optional turn configuration"""
@@ -256,6 +269,48 @@ class EgoTurnController:
             return math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
         return 0.0
     
+    def get_steering(self):
+        """Get current steering value for external control"""
+        return self._computed_steer
+    
+    def update_steering_only(self):
+        """Compute steering without applying control (for use with external controller)"""
+        if not self.ego_vehicle:
+            self._computed_steer = 0.0
+            return
+        
+        current_location = self.ego_vehicle.get_location()
+        current_transform = self.ego_vehicle.get_transform()
+        
+        # Check if we should start turning
+        if not self.is_turning and self.turn_trigger_x:
+            if current_location.x >= self.turn_trigger_x:
+                self.is_turning = True
+                print(f"\n🔄 Ego starting LEFT TURN at x={current_location.x:.1f}")
+        
+        # Compute steering
+        if self.is_turning and self.turn_target and not self.turn_complete:
+            dx = self.turn_target.x - current_location.x
+            dy = self.turn_target.y - current_location.y
+            distance = math.sqrt(dx*dx + dy*dy)
+            
+            if distance < 3.0:
+                self.turn_complete = True
+                print("✓ Turn complete")
+                self._computed_steer = 0.0
+            else:
+                desired_yaw = math.degrees(math.atan2(dy, dx))
+                current_yaw = current_transform.rotation.yaw
+                
+                yaw_diff = desired_yaw - current_yaw
+                while yaw_diff > 180:
+                    yaw_diff -= 360
+                while yaw_diff < -180:
+                    yaw_diff += 360
+                
+                self._computed_steer = max(-1.0, min(1.0, yaw_diff / 45.0))
+        else:
+            self._computed_steer = 0.0
     def is_turning_now(self):
         """Check if ego is currently turning"""
         return self.is_turning and not self.turn_complete
