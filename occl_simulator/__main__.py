@@ -46,7 +46,12 @@ def run_default_controller(world, scenario_data, scenario):
         scenario_data["ego_vehicle"],
         scenario_data["ego_speed_kmh"],
     )
-
+    if "occluders" in scenario_data:
+        vehicle_ctrl.set_occluders(scenario_data["occluders"])
+        print(f"Using {len(scenario_data['occluders'])} explicit occluder(s)")
+    else:
+        print("Using default occluders: all non-ego vehicles")    
+    
     pedestrian_ctrl = scenario_data["pedestrian_ctrl"]
 
     # Setup camera
@@ -67,13 +72,17 @@ def run_default_controller(world, scenario_data, scenario):
                 vehicle_ctrl.start_movement()
 
             # Update controllers
-            vehicle_ctrl.update()
+            ped_locations = getattr(pedestrian_ctrl, "pedestrians", [])
+
+            # Update ego controller with pedestrian positions (for grid video)
+            vehicle_ctrl.update(ped_locations)
+
+            # Update pedestrian movement
             pedestrian_ctrl.update_movement()
 
             # Tick world
             world.tick()
             time.sleep(0.05)  # 20 Hz tick
-
     except KeyboardInterrupt:
         print("\n\nScenario interrupted by user")
     finally:
