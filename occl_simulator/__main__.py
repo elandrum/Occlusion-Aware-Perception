@@ -13,7 +13,9 @@ import carla
 
 from occl_controller.controller import VehicleController
 from .camera import CameraManager
-from .scenario1 import Scenario1  # scenario file lives in occl_simulator/scenario1.py
+from .scenario1 import Scenario1
+from .scenario2 import Scenario2
+from .scenario4 import Scenario4, EgoTurnController
 
 
 def print_usage():
@@ -22,6 +24,8 @@ def print_usage():
     print("  python -m occl_simulator <scenario_name> [controller_name]")
     print("\nAvailable scenarios:")
     print("  scenario1  - Pedestrian crossing between two trucks")
+    print("  scenario2  - Neighbouring-lane moving-vehicle occlusion")
+    print("  scenario4  - Red-light runner hidden behind trucks (left turn)")
     print("\nAvailable controllers:")
     print("  default    - Basic collision scenario (default)")
     print("\nExample:")
@@ -75,6 +79,161 @@ def run_default_controller(world, scenario_data, scenario):
         camera_mgr.destroy()
 
 
+def run_scenario2_controller(world, scenario_data, scenario):
+    """Controller for Scenario 2: Moving vehicles with occlusion"""
+    print("\nRunning Scenario 2 controller...")
+    print("Logic: Ego and trucks move together, trucks brake for pedestrian")
+    print("       Ego must detect adjacent vehicle braking as hazard cue")
+
+    # Initialize ego vehicle controller
+    vehicle_ctrl = VehicleController(world)
+    vehicle_ctrl.set_ego_vehicle(
+        scenario_data["ego_vehicle"],
+        scenario_data["ego_speed_kmh"],
+    )
+
+    pedestrian_ctrl = scenario_data["pedestrian_ctrl"]
+    moving_vehicle_ctrl = scenario_data["moving_vehicle_ctrl"]
+
+    # Setup camera
+    camera_mgr = CameraManager(world)
+    camera_mgr.setup_camera(scenario_data["ego_vehicle"])
+
+    print("\nScenario running - Press Ctrl+C to stop...\n")
+
+    start_time = time.time()
+    ego_start_delay = 2.0
+    
+    # Track if we've logged the braking event
+    braking_logged = False
+
+    try:
+        while True:
+            current_time = time.time() - start_time
+
+            # Start all vehicles after delay
+            if current_time > ego_start_delay:
+                if not vehicle_ctrl.ego_moving:
+                    vehicle_ctrl.start_movement()
+                    moving_vehicle_ctrl.start_movement()
+
+            # Update pedestrian locations for proximity checks
+            ped_locations = []
+            for ped in pedestrian_ctrl.pedestrians:
+                ped_locations.append(ped.get_location())
+            moving_vehicle_ctrl.update_pedestrian_locations(ped_locations)
+
+            # Update all controllers
+            vehicle_ctrl.update()
+            pedestrian_ctrl.update_movement()
+            moving_vehicle_ctrl.update()
+            
+            # Log when trucks start braking (for debugging/visualization)
+            if moving_vehicle_ctrl.is_any_vehicle_braking() and not braking_logged:
+                print("\n" + "="*50)
+                print("🚨 ADJACENT VEHICLES BRAKING!")
+                print("   Occlusion-aware ego should react now")
+                print("="*50)
+                braking_logged = True
+
+            # Tick world
+            world.tick()
+            time.sleep(0.05)  # 20 Hz tick
+
+    except KeyboardInterrupt:
+        print("\n\nScenario interrupted by user")
+    finally:
+        # Print final speeds
+        print("\nFinal vehicle speeds:")
+        speeds = moving_vehicle_ctrl.get_vehicle_speeds()
+        for veh_id, speed in speeds.items():
+            print(f"  {veh_id}: {speed:.1f} km/h")
+        ego_speed = vehicle_ctrl.get_speed() * 3.6
+        print(f"  ego: {ego_speed:.1f} km/h")
+        camera_mgr.destroy()
+
+
+def run_scenario4_controller(world, scenario_data, scenario):
+    """Controller for Scenario 4: Left turn with hidden red-light runner"""
+    print("\nRunning Scenario 4 controller...")
+    print("Logic: Ego turns left at intersection, trucks block view of oncoming traffic")
+    print("       Red-light runner approaches hidden behind trucks")
+
+    # Initialize ego turn controller
+    ego_ctrl = EgoTurnController(world)
+    ego_ctrl.set_ego_vehicle(
+        scenario_data["ego_vehicle"],
+        scenario_data["ego_speed_kmh"],
+        scenario_data.get("turn_config")
+    )
+
+    vehicle_ctrl = scenario_data["vehicle_ctrl"]
+
+    # Setup camera
+    camera_mgr = CameraManager(world)
+    camera_mgr.setup_camera(scenario_data["ego_vehicle"])
+
+    print("\nScenario running - Press Ctrl+C to stop...\n")
+
+    start_time = time.time()
+    ego_start_delay = 2.0
+    
+    # Track events
+    turn_logged = False
+    collision_zone_logged = False
+
+    try:
+        while True:
+            current_time = time.time() - start_time
+
+            # Start all vehicles after delay
+            if current_time > ego_start_delay:
+                if not ego_ctrl.ego_moving:
+                    ego_ctrl.start_movement()
+                    vehicle_ctrl.start_movement()
+
+            # Update controllers
+            ego_ctrl.update()
+            vehicle_ctrl.update()
+            
+            # Log when ego starts turning
+            if ego_ctrl.is_turning_now() and not turn_logged:
+                print("\n" + "="*50)
+                print("🔄 EGO TURNING LEFT - View blocked by trucks!")
+                print("   Red-light runner approaching (HIDDEN)")
+                print("="*50)
+                turn_logged = True
+            
+            # Check for potential collision zone
+            ego_loc = ego_ctrl.get_location()
+            runner = vehicle_ctrl.get_vehicle_by_id("red_light_runner")
+            if ego_loc and runner and not collision_zone_logged:
+                runner_loc = runner['actor'].get_location()
+                distance = ego_loc.distance(runner_loc)
+                if distance < 20.0:
+                    print("\n" + "="*50)
+                    print("⚠️  COLLISION IMMINENT!")
+                    print(f"   Distance to red-light runner: {distance:.1f}m")
+                    print("="*50)
+                    collision_zone_logged = True
+
+            # Tick world
+            world.tick()
+            time.sleep(0.05)  # 20 Hz tick
+
+    except KeyboardInterrupt:
+        print("\n\nScenario interrupted by user")
+    finally:
+        # Print final speeds
+        print("\nFinal vehicle speeds:")
+        speeds = vehicle_ctrl.get_vehicle_speeds()
+        for veh_id, speed in speeds.items():
+            print(f"  {veh_id}: {speed:.1f} km/h")
+        ego_speed = ego_ctrl.get_speed() * 3.6
+        print(f"  ego: {ego_speed:.1f} km/h")
+        camera_mgr.destroy()
+
+
 def main():
     # Check command line arguments
     if len(sys.argv) < 2:
@@ -95,6 +254,8 @@ def main():
     # Map scenario names to classes
     SCENARIOS = {
         "scenario1": Scenario1,
+        "scenario2": Scenario2,
+        "scenario4": Scenario4,
     }
 
     if scenario_name not in SCENARIOS:
@@ -131,7 +292,13 @@ def main():
         # Run with the specified controller
         try:
             if controller_name == "default":
-                run_default_controller(world, scenario_data, scenario)
+                # Use scenario-specific controller if available
+                if scenario_name == "scenario2":
+                    run_scenario2_controller(world, scenario_data, scenario)
+                elif scenario_name == "scenario4":
+                    run_scenario4_controller(world, scenario_data, scenario)
+                else:
+                    run_default_controller(world, scenario_data, scenario)
             else:
                 print(f"Error: Unknown controller '{controller_name}'")
                 sys.exit(1)

@@ -1,0 +1,53 @@
+{
+  "ego_vehicle": {
+    "location": {
+      "x": -25.98,
+      "y": 3.21,
+      "z": 0.98
+    },
+    "rotation": {
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "roll": 0.0
+    },
+    "speed_kmh": 26
+  },
+  "moving_vehicles": [
+    {
+      "id": "truck_front",
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": -8.0,
+        "y": 6.5,
+        "z": 0.98
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      },
+      "speed_kmh": 26,
+      "brake_trigger": "pedestrian_proximity",
+      "brake_distance": 15.0,
+      "brake_decel": 8.0
+    },
+    {
+      "id": "truck_behind",
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": -18.0,
+        "y": 6.5,
+        "z": 0.98
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      },
+      "speed_kmh": 26,
+      "brake_trigger": "follow_front",
+      "follow_distance": 8.0,
+      "brake_decel": 8.0
+    }
+  ]
+}
