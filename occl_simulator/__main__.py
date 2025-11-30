@@ -15,6 +15,7 @@ from occl_controller.controller import VehicleController
 from .camera import CameraManager
 from .scenario1 import Scenario1
 from .scenario2 import Scenario2
+from .scenario3 import Scenario3
 from .scenario4 import Scenario4, EgoTurnController
 
 
@@ -255,6 +256,7 @@ def main():
     SCENARIOS = {
         "scenario1": Scenario1,
         "scenario2": Scenario2,
+        "scenario3": Scenario3,
         "scenario4": Scenario4,
     }
 
