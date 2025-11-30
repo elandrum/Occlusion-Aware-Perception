@@ -161,6 +161,54 @@ def run_scenario2_controller(world, scenario_data, scenario):
         ego_speed = vehicle_ctrl.get_speed() * 3.6
         print(f"  ego: {ego_speed:.1f} km/h")
         camera_mgr.destroy()
+        
+        
+def run_scenario3_controller(world, scenario_data, scenario):
+    """Controller for Scenario 3: Ego turns left at T-junction while ped crosses"""
+    print("\nRunning Scenario 3 controller...")
+    print("Logic: Ego drives toward T-junction, then turns LEFT,")
+    print("       while pedestrian crosses between parked trucks.")
+    
+    # Ego left-turn controller (same class used in Scenario 4)
+    ego_ctrl = EgoTurnController(world)
+    ego_ctrl.set_ego_vehicle(
+        scenario_data["ego_vehicle"],
+        scenario_data["ego_speed_kmh"],
+        scenario_data.get("turn_config"),
+    )
+    
+    pedestrian_ctrl = scenario_data["pedestrian_ctrl"]
+    
+    # Camera on ego
+    camera_mgr = CameraManager(world)
+    camera_mgr.setup_camera(scenario_data["ego_vehicle"])
+    
+    print("\nScenario running - Press Ctrl+C to stop...\n")
+    
+    start_time = time.time()
+    ego_start_delay = 2.0
+    
+    try:
+        while True:
+            current_time = time.time() - start_time
+            
+            # Start ego after short delay
+            if current_time > ego_start_delay and not ego_ctrl.ego_moving:
+                ego_ctrl.start_movement()
+            
+            # Update controllers
+            ego_ctrl.update()
+            pedestrian_ctrl.update_movement()
+            
+            # Step the world
+            world.tick()
+            time.sleep(0.05)  # ~20 Hz
+    except KeyboardInterrupt:
+        print("\n\nScenario interrupted by user")
+    finally:
+        ego_speed = ego_ctrl.get_speed() * 3.6
+        print(f"\nFinal ego speed: {ego_speed:.1f} km/h")
+        camera_mgr.destroy()
 
 
 def run_scenario4_controller(world, scenario_data, scenario):
@@ -306,6 +354,8 @@ def main():
                 # Use scenario-specific controller if available
                 if scenario_name == "scenario2":
                     run_scenario2_controller(world, scenario_data, scenario)
+                elif scenario_name == "scenario3":
+                    run_scenario3_controller(world, scenario_data, scenario)
                 elif scenario_name == "scenario4":
                     run_scenario4_controller(world, scenario_data, scenario)
                 else:

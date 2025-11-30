@@ -19,6 +19,7 @@ class VehicleController:
         self.grid_cells = 40             # 40 x 40 cells
         self.ray_step = 0.5              # meters per sample along ray
         self.max_range = self.grid_world_size / 2.0
+        self.pedestrian_actors = [] 
 
         # Video writer
         os.makedirs("output", exist_ok=True)
@@ -38,6 +39,10 @@ class VehicleController:
     def set_occluders(self, actors):
         """Set list of CARLA actors that should be treated as occluders."""
         self.occluder_actors = list(actors) if actors is not None else []
+        
+    def set_pedestrians(self, actors):
+        """Set pedestrians whose positions should be drawn on the occlusion grid."""
+        self.pedestrian_actors = list(actors) if actors is not None else []
 
     def _get_blocking_rects(self):
         """

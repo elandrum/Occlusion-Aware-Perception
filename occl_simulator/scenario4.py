@@ -158,13 +158,19 @@ class EgoTurnController:
         if turn_config:
             self.turn_type = turn_config.get('type', 'left')
             self.turn_trigger_x = turn_config.get('trigger_x', 15.0)
+            start_loc = self.ego_vehicle.get_location()
+            self._turn_decreasing_x = self.turn_trigger_x < start_loc.x
             target = turn_config.get('target_location', {})
             self.turn_target = carla.Location(
                 x=target.get('x', 25.0),
                 y=target.get('y', -20.0),
                 z=target.get('z', 0.98)
             )
-            print(f"Ego vehicle will turn {self.turn_type} at x={self.turn_trigger_x}")
+            direction = "decreasing" if self._turn_decreasing_x else "increasing"
+            print(
+                f"Ego vehicle will turn {self.turn_type} at x={self.turn_trigger_x} "
+                f"along {direction} x"
+            )
         
         print(f"Ego turn controller initialized at {speed_kmh} km/h")
     
@@ -191,10 +197,16 @@ class EgoTurnController:
         current_transform = self.ego_vehicle.get_transform()
         
         # Check if we should start turning
-        if not self.is_turning and self.turn_trigger_x:
-            if current_location.x >= self.turn_trigger_x:
+        # Check if we should start turning
+        if not self.is_turning and self.turn_trigger_x is not None:
+            if (
+                (not getattr(self, "_turn_decreasing_x", False) and current_location.x >= self.turn_trigger_x)
+                or
+                (getattr(self, "_turn_decreasing_x", False) and current_location.x <= self.turn_trigger_x)
+            ):
                 self.is_turning = True
                 print(f"\n🔄 Ego starting LEFT TURN at x={current_location.x:.1f}")
+
         
         # Calculate control
         target_speed_ms = self.ego_speed_kmh / 3.6

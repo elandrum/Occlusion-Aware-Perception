@@ -32,6 +32,7 @@ class Scenario3:
         # Store spawned actors
         self.ego_vehicle = None
         self.ego_speed_kmh = 30
+        self.turn_config = None
         
     def setup(self):
         """Setup the scenario - spawn all actors"""
@@ -47,6 +48,11 @@ class Scenario3:
         # Spawn scenery elements
         self.ego_vehicle, self.ego_speed_kmh = self.scenery.spawn_ego_vehicle(vehicle_config)
         self.scenery.spawn_trucks(vehicle_config)
+        
+        self.turn_config = None
+        if 'ego_vehicle' in vehicle_config and 'turn' in vehicle_config['ego_vehicle']:
+            self.turn_config = vehicle_config['ego_vehicle']['turn']
+            print(f"Loaded turn config for Scenario 3: {self.turn_config}")
         
         # Spawn pedestrians
         self.pedestrian_ctrl.spawn_pedestrians(pedestrian_config)
@@ -64,6 +70,7 @@ class Scenario3:
         return {
             'ego_vehicle': self.ego_vehicle,
             'ego_speed_kmh': self.ego_speed_kmh,
+            'turn_config': self.turn_config,
             'pedestrian_ctrl': self.pedestrian_ctrl
         }
     
