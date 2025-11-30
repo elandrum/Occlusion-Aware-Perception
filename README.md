@@ -1,6 +1,10 @@
 # Occlusion-Aware-Perception
 
-A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception and control in challenging occlusion scenarios. The current baseline scenario places a pedestrian crossing between two parked trucks, creating a realistic occluded-crosswalk situation for the ego vehicle.
+A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception and control in challenging occlusion scenarios. This framework includes multiple scenarios testing different occlusion types:
+
+- **Scenario 1**: Static truck occlusion with pedestrian crossing
+- **Scenario 2**: Moving vehicle occlusion in adjacent lane
+- **Scenario 4**: Left turn occlusion with hidden red-light runner
 
 ---
 
@@ -15,14 +19,21 @@ Occlusion-Aware-Perception/
 ├── occl_simulator/
 │   ├── __main__.py             # Main entry point - runs scenarios
 │   ├── scenario1.py            # Scenario 1: Pedestrian crossing between two trucks
+│   ├── scenario2.py            # Scenario 2: Neighbouring-lane moving-vehicle occlusion
+│   ├── scenario4.py            # Scenario 4: Red-light runner hidden behind trucks
 │   ├── config.py               # Scenario configuration loader
 │   ├── actors_static.py        # Static actors (trucks, props)
+│   ├── actors_moving.py        # Moving vehicle controller
 │   ├── actors_peds.py          # Pedestrian spawning and movement
 │   ├── camera.py               # Camera sensor and video recording
 │   └── capture_waypoints.py    # Tool to capture positions in CARLA
 ├── test_data/
 │   ├── scenario1_vehicles.json # Vehicle configuration for scenario 1
-│   └── scenario1_peds.json     # Pedestrian configuration for scenario 1
+│   ├── scenario1_peds.json     # Pedestrian configuration for scenario 1
+│   ├── scenario2_vehicles.json # Vehicle configuration for scenario 2
+│   ├── scenario2_peds.json     # Pedestrian configuration for scenario 2
+│   ├── scenario4_vehicles.json # Vehicle configuration for scenario 4
+│   └── scenario4_peds.json     # Pedestrian configuration for scenario 4
 ├── tests/
 │   └── __init__.py
 ├── requirements.txt
@@ -98,16 +109,40 @@ CARLA 0.9.15 connected at 127.0.0.1:2000.
 Inside same container after CARLA is running:
 ```
 cd ~/Occlusion-Aware-Perception
-PYTHONPATH=. python3 -m occl_simulator scenario1
-```
-This:
-- Connects to CARLA
-- Loads Town05
-- Spawns ego vehicle + trucks + pedestrian
-- Runs default controller
-- Records video
 
-Stop with Ctrl+C.
+# Run Scenario 1: Pedestrian crossing between static trucks
+PYTHONPATH=. python3 -m occl_simulator scenario1
+
+# Run Scenario 2: Neighbouring-lane moving-vehicle occlusion
+PYTHONPATH=. python3 -m occl_simulator scenario2
+
+# Run Scenario 4: Left turn with hidden red-light runner
+PYTHONPATH=. python3 -m occl_simulator scenario4
+```
+
+---
+
+# Scenario Descriptions
+
+## Scenario 1: Static Truck Occlusion
+- Two stationary trucks parked on the side of the road
+- Pedestrian crosses between the trucks
+- Ego vehicle approaches and must detect the occluded pedestrian
+- Tests: Static occlusion detection
+
+## Scenario 2: Neighbouring-Lane Moving-Vehicle Occlusion
+- Two trucks moving in the adjacent lane (slightly ahead of ego)
+- Pedestrian crosses in front of the trucks
+- Front truck brakes hard for pedestrian
+- Ego cannot see pedestrian (blocked by trucks) but should react to truck braking
+- Tests: Dynamic occlusion + social cue detection (adjacent vehicle braking)
+
+## Scenario 4: Red-Light Runner Hidden Behind Trucks
+- Two trucks moving ahead of ego (one in each lane)
+- Ego approaches intersection and initiates left turn
+- Red-light runner approaches from opposite direction (hidden behind trucks)
+- Ego's view of oncoming traffic is blocked during left turn
+- Tests: Intersection occlusion + left turn hazard detection
 
 ---
 
