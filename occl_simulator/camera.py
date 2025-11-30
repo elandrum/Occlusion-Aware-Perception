@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 """
-Camera Manager - Handles camera sensor and provides live frames
-Compatible with the Combined Grid + Camera Video Controller
+Camera Manager - Handles RGB and Depth camera sensors
+Provides live frames for vision-based pedestrian detection
 """
 
 import carla
@@ -13,23 +13,27 @@ from datetime import datetime
 
 
 class CameraManager:
-    """Manages camera sensor for ego vehicle and provides live frames with HUD overlay"""
+    """Manages RGB and Depth camera sensors for ego vehicle with HUD overlay"""
 
     def __init__(self, world, output_dir='output', save_frames=True):
         self.world = world
         self.camera = None
+        self.depth_camera = None  # Depth camera for 3D position estimation
         self.ego_vehicle = None  # Reference to ego vehicle for speed display
 
         self.output_dir = output_dir
         self.save_frames = save_frames
 
-        # Live frame buffer for controller
-        self.latest_frame = None   # numpy array (BGR)
+        # Live frame buffers
+        self.latest_frame = None       # RGB numpy array (BGR)
+        self.latest_frame_raw = None   # RGB without HUD overlay
+        self.latest_depth = None       # Depth numpy array (meters)
 
         # Standard camera settings
         self.image_width = 960
         self.image_height = 540
-        self.fps = 20  # 20 FPS camera
+        self.fov = 110  # Field of view in degrees
+        self.fps = 20   # 20 FPS camera
 
         # For optional frame saving
         self.image_dir = None
@@ -43,23 +47,26 @@ class CameraManager:
         # HUD settings
         self.show_hud = True
         self.hud_metrics = {}  # Dictionary to store metrics for display
+        
+        # Pedestrian detection overlay
+        self.detection_overlay = None  # Will be set by controller
 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
     # -----------------------------------------------------------
-    # Attach camera to ego vehicle
+    # Attach cameras to ego vehicle
     # -----------------------------------------------------------
     def setup_camera(self, vehicle):
         self.ego_vehicle = vehicle  # Store reference for speed display
         
         blueprint_library = self.world.get_blueprint_library()
+        
+        # ----- RGB Camera -----
         camera_bp = blueprint_library.find('sensor.camera.rgb')
-
-        # Camera attributes
         camera_bp.set_attribute('image_size_x', str(self.image_width))
         camera_bp.set_attribute('image_size_y', str(self.image_height))
-        camera_bp.set_attribute('fov', '110')
+        camera_bp.set_attribute('fov', str(self.fov))
         camera_bp.set_attribute('sensor_tick', '0.05')  # 20Hz
 
         # Camera transform: front, slightly raised
@@ -70,6 +77,19 @@ class CameraManager:
 
         self.camera = self.world.spawn_actor(
             camera_bp,
+            camera_transform,
+            attach_to=vehicle
+        )
+        
+        # ----- Depth Camera (same position as RGB) -----
+        depth_bp = blueprint_library.find('sensor.camera.depth')
+        depth_bp.set_attribute('image_size_x', str(self.image_width))
+        depth_bp.set_attribute('image_size_y', str(self.image_height))
+        depth_bp.set_attribute('fov', str(self.fov))
+        depth_bp.set_attribute('sensor_tick', '0.05')  # 20Hz
+        
+        self.depth_camera = self.world.spawn_actor(
+            depth_bp,
             camera_transform,
             attach_to=vehicle
         )
@@ -90,12 +110,55 @@ class CameraManager:
                 (self.image_width, self.image_height)
             )
 
+        # Start listening to camera feeds
         self.camera.listen(self._on_camera_update)
+        self.depth_camera.listen(self._on_depth_update)
 
-        print("Camera attached.")
+        print("RGB Camera attached.")
+        print("Depth Camera attached.")
         if self.save_frames:
             print(f"Saving raw CARLA frames to: {self.image_dir}")
             print(f"Saving raw video to: {self.video_path}")
+    
+    def get_camera_intrinsics(self):
+        """Return camera intrinsic parameters for 3D projection"""
+        return {
+            'width': self.image_width,
+            'height': self.image_height,
+            'fov': self.fov
+        }
+    
+    def get_raw_frame(self):
+        """Get the latest RGB frame without HUD overlay (for YOLO detection)"""
+        return self.latest_frame_raw
+    
+    def get_depth_frame(self):
+        """Get the latest depth frame (values in meters)"""
+        return self.latest_depth
+    
+    def set_detection_overlay(self, overlay_frame):
+        """Set a frame with detection boxes to be composited onto HUD"""
+        self.detection_overlay = overlay_frame
+
+    # -----------------------------------------------------------
+    # Depth camera callback
+    # -----------------------------------------------------------
+    def _on_depth_update(self, image):
+        """Process depth camera frame"""
+        # Convert CARLA depth image to meters
+        # CARLA encodes depth as (R + G*256 + B*256*256) / (256^3 - 1) * 1000
+        array = np.frombuffer(image.raw_data, dtype=np.uint8)
+        array = np.reshape(array, (image.height, image.width, 4))
+        
+        # Convert BGRA to depth in meters
+        # Normalized depth = (R + G*256 + B*256*256) / (256^3 - 1)
+        # Depth in meters = normalized * 1000
+        array = array.astype(np.float32)
+        depth = (array[:, :, 2] + array[:, :, 1] * 256.0 + array[:, :, 0] * 256.0 * 256.0)
+        depth = depth / (256.0 * 256.0 * 256.0 - 1.0)
+        depth = depth * 1000.0  # Convert to meters
+        
+        self.latest_depth = depth
 
     # -----------------------------------------------------------
     # HUD Rendering Methods
@@ -172,6 +235,38 @@ class CameraManager:
             cv2.putText(frame, f"Target: {target_speed:.0f} km/h", (20, 100), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 1)
         
+        # --- Pedestrian Alert (Center, if detected) ---
+        ped_in_path = self.hud_metrics.get('pedestrian_in_path', False)
+        ped_distance = self.hud_metrics.get('pedestrian_distance')
+        num_peds = self.hud_metrics.get('num_pedestrians', 0)
+        
+        if ped_in_path:
+            # EMERGENCY ALERT - Pedestrian in path
+            alert_text = "PEDESTRIAN!"
+            alert_color = (0, 0, 255)  # Red
+            
+            # Large flashing alert box in center-top
+            box_w, box_h = 300, 60
+            box_x = (w - box_w) // 2
+            box_y = 90
+            
+            cv2.rectangle(frame, (box_x, box_y), (box_x + box_w, box_y + box_h), (0, 0, 0), -1)
+            cv2.rectangle(frame, (box_x, box_y), (box_x + box_w, box_y + box_h), alert_color, 3)
+            
+            cv2.putText(frame, alert_text, (box_x + 30, box_y + 42), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, alert_color, 3)
+            
+            if ped_distance is not None:
+                dist_text = f"{ped_distance:.1f}m"
+                cv2.putText(frame, dist_text, (box_x + 220, box_y + 42), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        elif num_peds > 0 and ped_distance is not None:
+            # Caution - pedestrians nearby but not directly in path
+            caution_text = f"PEDS: {num_peds} ({ped_distance:.0f}m)"
+            cv2.putText(frame, caution_text, (w//2 - 80, 110), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
         return frame
     
     def _get_risk_color(self, risk_level):
@@ -196,10 +291,18 @@ class CameraManager:
         array = np.reshape(array, (image.height, image.width, 4))
         array = array[:, :, :3]  # BGR
 
+        # Store raw frame (without HUD) for YOLO detection
+        self.latest_frame_raw = array.copy()
+        
+        # If we have detection overlay, use that instead of raw frame
+        if self.detection_overlay is not None:
+            array = self.detection_overlay.copy()
+            self.detection_overlay = None  # Clear after use
+
         # Apply HUD overlay
         array_with_hud = self._render_hud(array)
 
-        # Store live frame for controller (with HUD)
+        # Store live frame for display (with HUD)
         self.latest_frame = array_with_hud.copy()
 
         # Optionally write PNG & raw camera video (with HUD)
@@ -274,7 +377,12 @@ class CameraManager:
         if self.camera is not None:
             self.camera.stop()
             self.camera.destroy()
-            print("\nCamera destroyed.")
+            print("\nRGB Camera destroyed.")
+        
+        if self.depth_camera is not None:
+            self.depth_camera.stop()
+            self.depth_camera.destroy()
+            print("Depth Camera destroyed.")
 
         if self.video_writer is not None:
             self.video_writer.release()

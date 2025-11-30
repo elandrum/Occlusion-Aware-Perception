@@ -4,7 +4,7 @@ A modular CARLA simulation framework designed to test and evaluate autonomous ve
 
 - **Scenario 1**: Static truck occlusion with pedestrian crossing
 - **Scenario 2**: Moving vehicle occlusion in adjacent lane
-- **Scenario 4**: Left turn occlusion with hidden red-light runner
+- **Scenario 3**: Pedestrian crossing between multiple parked vehicles
 
 ---
 
@@ -20,7 +20,7 @@ Occlusion-Aware-Perception/
 │   ├── __main__.py             # Main entry point - runs scenarios
 │   ├── scenario1.py            # Scenario 1: Pedestrian crossing between two trucks
 │   ├── scenario2.py            # Scenario 2: Neighbouring-lane moving-vehicle occlusion
-│   ├── scenario4.py            # Scenario 4: Red-light runner hidden behind trucks
+│   ├── scenario3.py            # Scenario 3: Pedestrian crossing between multiple parked vehicles
 │   ├── config.py               # Scenario configuration loader
 │   ├── actors_static.py        # Static actors (trucks, props)
 │   ├── actors_moving.py        # Moving vehicle controller
@@ -32,8 +32,8 @@ Occlusion-Aware-Perception/
 │   ├── scenario1_peds.json     # Pedestrian configuration for scenario 1
 │   ├── scenario2_vehicles.json # Vehicle configuration for scenario 2
 │   ├── scenario2_peds.json     # Pedestrian configuration for scenario 2
-│   ├── scenario4_vehicles.json # Vehicle configuration for scenario 4
-│   └── scenario4_peds.json     # Pedestrian configuration for scenario 4
+│   ├── scenario3_vehicles.json # Vehicle configuration for scenario 3
+│   └── scenario3_peds.json     # Pedestrian configuration for scenario 3
 ├── tests/
 │   └── __init__.py
 ├── requirements.txt
@@ -116,8 +116,8 @@ PYTHONPATH=. python3 -m occl_simulator scenario1
 # Run Scenario 2: Neighbouring-lane moving-vehicle occlusion
 PYTHONPATH=. python3 -m occl_simulator scenario2
 
-# Run Scenario 4: Left turn with hidden red-light runner
-PYTHONPATH=. python3 -m occl_simulator scenario4
+# Run Scenario 3: Pedestrian crossing between multiple parked vehicles
+PYTHONPATH=. python3 -m occl_simulator scenario3
 ```
 
 ## Running with Occlusion-Aware Controller
@@ -156,12 +156,12 @@ PYTHONPATH=. python3 -m occl_simulator scenario2 aware
 - Ego cannot see pedestrian (blocked by trucks) but should react to truck braking
 - Tests: Dynamic occlusion + social cue detection (adjacent vehicle braking)
 
-## Scenario 4: Red-Light Runner Hidden Behind Trucks
-- Two trucks moving ahead of ego (one in each lane)
-- Ego approaches intersection and initiates left turn
-- Red-light runner approaches from opposite direction (hidden behind trucks)
-- Ego's view of oncoming traffic is blocked during left turn
-- Tests: Intersection occlusion + left turn hazard detection
+## Scenario 3: Pedestrian Crossing Between Multiple Parked Vehicles
+- Multiple parked vehicles (trucks, cars) creating occlusion zones on both sides of the road
+- Pedestrian crosses the street between the parked vehicles
+- Ego vehicle approaches at moderate speed (16 km/h)
+- Pedestrian is hidden by the parked firetruck and other vehicles until crossing
+- Tests: Complex multi-vehicle static occlusion + pedestrian detection
 
 ---
 

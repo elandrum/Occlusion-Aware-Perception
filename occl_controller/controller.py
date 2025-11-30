@@ -3,6 +3,7 @@ import math
 import numpy as np
 import cv2
 import os
+import time
 from datetime import datetime
 
 
@@ -39,6 +40,8 @@ class VehicleController:
             (self.frame_size_px, self.frame_size_px),
         )
         self.grid_frame_count = 0
+        self._last_frame_time = 0.0  # Track last frame time to avoid duplicate pts
+        self._video_writer_closed = False
 
     def set_occluders(self, actors):
         """Set list of CARLA actors that should be treated as occluders."""
@@ -197,10 +200,15 @@ class VehicleController:
         center_px = self.frame_size_px // 2
         cv2.circle(img, (center_px, center_px), 6, (0, 255, 0), -1)
 
-        # write video frame
-        if self.grid_writer is not None:
-            self.grid_writer.write(img)
-            self.grid_frame_count += 1
+        # write video frame (with rate limiting to avoid duplicate timestamps)
+        current_time = time.time()
+        min_frame_interval = 1.0 / 25.0  # Max 25 fps to avoid pts issues
+        
+        if self.grid_writer is not None and not self._video_writer_closed:
+            if current_time - self._last_frame_time >= min_frame_interval:
+                self.grid_writer.write(img)
+                self.grid_frame_count += 1
+                self._last_frame_time = current_time
         
         return grid
 
@@ -254,12 +262,18 @@ class VehicleController:
         self.ego_vehicle.apply_control(self.ego_control)
 
     def destroy(self):
-        if self.grid_writer is not None:
-            self.grid_writer.release()
-            print(
-                f"[Occlusion Grid Video] Saved {self.grid_frame_count} frames to "
-                f"{self.grid_video_path}"
-            )
+        """Clean up resources safely."""
+        if self.grid_writer is not None and not self._video_writer_closed:
+            try:
+                self._video_writer_closed = True
+                self.grid_writer.release()
+                self.grid_writer = None
+                print(
+                    f"[Occlusion Grid Video] Saved {self.grid_frame_count} frames to "
+                    f"{self.grid_video_path}"
+                )
+            except Exception as e:
+                print(f"[Warning] Error releasing video writer: {e}")
 
 
 class OcclusionAwareController(VehicleController):
@@ -273,17 +287,19 @@ class OcclusionAwareController(VehicleController):
     1. 360° occlusion analysis (forward, sides, rear)
     2. Time-to-collision (TTC) estimation for occluded regions
     3. Adjacent vehicle behavior monitoring (social cues)
-    4. Probabilistic risk model combining multiple factors
-    5. Smooth speed control with comfort constraints
+    4. Vision-based pedestrian detection (YOLO + Depth Camera)
+    5. Probabilistic risk model combining multiple factors
+    6. Smooth speed control with comfort constraints
     
     The controller automatically adapts to:
     - Static occlusions (parked vehicles)
     - Dynamic occlusions (moving vehicles)
     - Intersection scenarios (left/right turns)
+    - Pedestrian crossings (only detects VISIBLE pedestrians)
     - Any combination of the above
     """
     
-    def __init__(self, world):
+    def __init__(self, world, use_vision_detection=True):
         super().__init__(world)
         
         # Expand grid for better situational awareness
@@ -322,6 +338,28 @@ class OcclusionAwareController(VehicleController):
         self.risk_danger = 0.6           # Significant braking
         self.risk_emergency = 0.85       # Emergency stop
         
+        # Pedestrian detection settings
+        self.ped_stop_distance = 15.0    # Stop if ped within this distance (meters)
+        self.ped_caution_distance = 25.0 # Slow down if ped within this distance
+        self.detected_pedestrians = []   # List of detected peds with bounding boxes
+        self.pedestrian_in_path = False  # Flag for emergency stop
+        self.closest_ped_distance = float('inf')
+        
+        # Vision-based detection
+        self.use_vision_detection = use_vision_detection
+        self.ped_detector = None
+        self.camera_manager = None       # Will be set externally
+        
+        if use_vision_detection:
+            try:
+                from .pedestrian_detector import create_detector
+                self.ped_detector = create_detector(use_yolo=True, model_name='yolov8n.pt', confidence=0.5)
+                print("✓ Vision-based pedestrian detection enabled (YOLO + Depth)")
+            except Exception as e:
+                print(f"⚠ Vision detection failed to load: {e}")
+                print("  Falling back to ground-truth detection")
+                self.use_vision_detection = False
+        
         # State
         self.current_risk = 0.0
         self.target_speed_ms = 0.0
@@ -337,7 +375,21 @@ class OcclusionAwareController(VehicleController):
         print("  Mode: Automatic (works for all scenarios)")
         print(f"  Grid: {self.grid_cells}x{self.grid_cells} cells, {self.grid_world_size}m range")
         print(f"  Risk thresholds: caution={self.risk_caution}, danger={self.risk_danger}")
+        print(f"  Pedestrian detection: {'YOLO + Depth (Vision)' if self.use_vision_detection else 'Ground Truth'}")
+        print(f"  Pedestrian stop distance: {self.ped_stop_distance}m")
         print("="*60 + "\n")
+    
+    def set_camera_manager(self, camera_manager):
+        """Set the camera manager for vision-based detection"""
+        self.camera_manager = camera_manager
+        
+        if self.ped_detector and camera_manager:
+            intrinsics = camera_manager.get_camera_intrinsics()
+            self.ped_detector.set_camera_intrinsics(
+                intrinsics['width'],
+                intrinsics['height'],
+                intrinsics['fov']
+            )
     
     def _init_risk_model(self):
         """
@@ -537,6 +589,192 @@ class OcclusionAwareController(VehicleController):
         
         return social_risk, details
     
+    def _detect_pedestrians_vision(self):
+        """
+        Vision-based pedestrian detection using YOLO + Depth camera.
+        Only detects pedestrians that are VISIBLE to the camera.
+        
+        Returns:
+            - ped_risk: Risk level based on pedestrian proximity (0.0 to 1.0)
+            - should_stop: Boolean - True if emergency stop needed
+            - detected_peds: List of dicts with pedestrian info for visualization
+        """
+        if self.camera_manager is None or self.ped_detector is None:
+            return 0.0, False, []
+        
+        # Get raw RGB frame (without HUD)
+        rgb_frame = self.camera_manager.get_raw_frame()
+        depth_frame = self.camera_manager.get_depth_frame()
+        
+        if rgb_frame is None:
+            return 0.0, False, []
+        
+        # Run YOLO detection
+        detections = self.ped_detector.detect(rgb_frame)
+        
+        if not detections:
+            self.detected_pedestrians = []
+            self.pedestrian_in_path = False
+            self.closest_ped_distance = float('inf')
+            return 0.0, False, []
+        
+        # Estimate 3D positions using depth
+        positions_3d = self.ped_detector.estimate_3d_positions(detections, depth_frame)
+        
+        # Determine which pedestrians are in path
+        peds_in_path, should_stop, closest_dist = self.ped_detector.get_pedestrians_in_path(
+            positions_3d,
+            lane_width=3.5,
+            stop_distance=self.ped_stop_distance
+        )
+        
+        # Calculate risk
+        ped_risk = 0.0
+        if should_stop:
+            ped_risk = 1.0
+            print(f"\n🚨 PEDESTRIAN DETECTED (YOLO)! Distance: {closest_dist:.1f}m - STOPPING!")
+        elif closest_dist < self.ped_caution_distance:
+            proximity_risk = 1.0 - (closest_dist - self.ped_stop_distance) / (self.ped_caution_distance - self.ped_stop_distance)
+            ped_risk = max(0, proximity_risk * 0.8)
+        
+        # Convert to format expected by rest of system
+        detected_peds = []
+        for pos in positions_3d:
+            ped_info = {
+                'distance': pos['distance'],
+                'forward_dist': pos['z'],
+                'lateral_dist': pos['lateral_offset'],
+                'in_path': pos.get('in_path', False),
+                'detection': pos['detection'],  # YOLO detection info
+                'bbox': {
+                    'width': 0.6,
+                    'height': 1.8
+                }
+            }
+            detected_peds.append(ped_info)
+        
+        # Draw detection boxes on frame for visualization
+        if rgb_frame is not None:
+            overlay = self.ped_detector.draw_detections(rgb_frame, positions_3d)
+            self.camera_manager.set_detection_overlay(overlay)
+        
+        self.detected_pedestrians = detected_peds
+        self.pedestrian_in_path = should_stop
+        self.closest_ped_distance = closest_dist if closest_dist < float('inf') else float('inf')
+        
+        return ped_risk, should_stop, detected_peds
+    
+    def _detect_pedestrians_ground_truth(self):
+        """
+        Ground-truth pedestrian detection (uses CARLA actor info directly).
+        Detects ALL pedestrians regardless of visibility - used as fallback.
+        
+        Returns:
+            - ped_risk: Risk level based on pedestrian proximity (0.0 to 1.0)
+            - should_stop: Boolean - True if emergency stop needed
+            - detected_peds: List of dicts with pedestrian info for visualization
+        """
+        if self.world is None or self.ego_vehicle is None:
+            return 0.0, False, []
+        
+        ego_tf = self.ego_vehicle.get_transform()
+        ego_loc = ego_tf.location
+        ego_fwd = ego_tf.get_forward_vector()
+        ego_right = ego_tf.get_right_vector()
+        
+        # Get all pedestrians (walkers)
+        walkers = self.world.get_actors().filter("walker.pedestrian.*")
+        
+        detected_peds = []
+        ped_risk = 0.0
+        should_stop = False
+        closest_dist = float('inf')
+        
+        for walker in walkers:
+            w_loc = walker.get_location()
+            
+            # Vector from ego to pedestrian
+            dx = w_loc.x - ego_loc.x
+            dy = w_loc.y - ego_loc.y
+            
+            distance = math.sqrt(dx**2 + dy**2)
+            
+            if distance > self.ped_caution_distance:
+                continue  # Too far to care
+            
+            # Calculate relative position (forward/lateral)
+            dot_forward = dx * ego_fwd.x + dy * ego_fwd.y
+            dot_right = dx * ego_right.x + dy * ego_right.y
+            
+            # Pedestrian bounding box (approximate)
+            ped_width = 0.6   # meters
+            ped_height = 1.8  # meters
+            
+            # Store pedestrian info for visualization
+            ped_info = {
+                'location': w_loc,
+                'distance': distance,
+                'forward_dist': dot_forward,
+                'lateral_dist': dot_right,
+                'in_path': False,
+                'bbox': {
+                    'width': ped_width,
+                    'height': ped_height
+                }
+            }
+            
+            # Check if pedestrian is in the ego's forward path
+            if dot_forward > 0:  # Pedestrian is ahead
+                lateral_threshold = 2.5  # Half lane + buffer
+                
+                if abs(dot_right) < lateral_threshold:
+                    # Pedestrian is in our path!
+                    ped_info['in_path'] = True
+                    
+                    if distance < closest_dist:
+                        closest_dist = distance
+                    
+                    # Calculate risk based on distance
+                    if distance < self.ped_stop_distance:
+                        # EMERGENCY - pedestrian very close, STOP!
+                        should_stop = True
+                        ped_risk = 1.0
+                        print(f"\n🚨 PEDESTRIAN DETECTED (GT)! Distance: {distance:.1f}m - STOPPING!")
+                    elif distance < self.ped_caution_distance:
+                        # Caution - slow down
+                        proximity_risk = 1.0 - (distance - self.ped_stop_distance) / (self.ped_caution_distance - self.ped_stop_distance)
+                        ped_risk = max(ped_risk, proximity_risk * 0.8)
+            
+            detected_peds.append(ped_info)
+        
+        self.detected_pedestrians = detected_peds
+        self.pedestrian_in_path = should_stop
+        self.closest_ped_distance = closest_dist
+        
+        return ped_risk, should_stop, detected_peds
+    
+    def _detect_pedestrians(self):
+        """
+        Detect pedestrians - uses vision-based or ground-truth depending on config.
+        
+        Returns:
+            - ped_risk: Risk level based on pedestrian proximity (0.0 to 1.0)
+            - should_stop: Boolean - True if emergency stop needed
+            - detected_peds: List of dicts with pedestrian info for visualization
+        """
+        if self.use_vision_detection and self.ped_detector and self.camera_manager:
+            return self._detect_pedestrians_vision()
+        else:
+            return self._detect_pedestrians_ground_truth()
+    
+    def get_pedestrian_info(self):
+        """Return detected pedestrian info for HUD/camera overlay"""
+        return {
+            'pedestrians': self.detected_pedestrians,
+            'pedestrian_in_path': self.pedestrian_in_path,
+            'closest_distance': self.closest_ped_distance
+        }
+    
     def _compute_target_speed(self, risk_level, min_forward_dist):
         """
         Compute safe target speed based on risk level and distance to occlusion.
@@ -593,9 +831,84 @@ class OcclusionAwareController(VehicleController):
         self.ego_control.steer = 0.0
         self.ego_vehicle.apply_control(self.ego_control)
     
+    def _draw_pedestrians_on_grid(self, img, center_px, scale):
+        """
+        Draw pedestrian bounding boxes on the occlusion grid visualization.
+        
+        Args:
+            img: The grid image to draw on
+            center_px: Center pixel position (ego location)
+            scale: Pixels per grid cell
+        """
+        if not self.detected_pedestrians or self.ego_vehicle is None:
+            return
+        
+        cell_size = self.grid_world_size / self.grid_cells
+        
+        for ped in self.detected_pedestrians:
+            # Get pedestrian position in ego-local coordinates
+            # Handle both vision-based and ground-truth formats
+            if 'location' in ped:
+                # Ground-truth format: has CARLA location object
+                ego_tf = self.ego_vehicle.get_transform()
+                ego_loc = ego_tf.location
+                ego_fwd = ego_tf.get_forward_vector()
+                ego_right = ego_tf.get_right_vector()
+                
+                w_loc = ped['location']
+                dx = w_loc.x - ego_loc.x
+                dy = w_loc.y - ego_loc.y
+                
+                # Project onto ego frame (x: right, y: forward)
+                x_local = dx * ego_right.x + dy * ego_right.y
+                y_local = dx * ego_fwd.x + dy * ego_fwd.y
+            else:
+                # Vision-based format: has forward_dist and lateral_dist directly
+                x_local = ped.get('lateral_dist', 0)
+                y_local = ped.get('forward_dist', 0)
+            
+            # Convert to pixel coordinates
+            px = int(center_px + (x_local / cell_size) * scale)
+            py = int(center_px - (y_local / cell_size) * scale)
+            
+            # Bounding box size in pixels (approximate pedestrian size)
+            bbox = ped.get('bbox', {'width': 0.6, 'height': 1.8})
+            ped_width_px = int((bbox['width'] / cell_size) * scale)
+            ped_height_px = int((bbox['height'] / cell_size) * scale)
+            
+            # Ensure minimum visible size
+            ped_width_px = max(ped_width_px, 8)
+            ped_height_px = max(ped_height_px, 12)
+            
+            # Draw bounding box
+            if ped.get('in_path', False):
+                # Red box for pedestrian in path
+                box_color = (0, 0, 255)
+                thickness = 3
+            else:
+                # Yellow box for nearby pedestrian
+                box_color = (0, 255, 255)
+                thickness = 2
+            
+            # Draw rectangle (centered on pedestrian)
+            x1 = px - ped_width_px // 2
+            y1 = py - ped_height_px // 2
+            x2 = px + ped_width_px // 2
+            y2 = py + ped_height_px // 2
+            
+            cv2.rectangle(img, (x1, y1), (x2, y2), box_color, thickness)
+            
+            # Draw label with distance
+            dist_text = f"{ped['distance']:.0f}m"
+            cv2.putText(img, dist_text, (x1, y1 - 5), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, box_color, 1)
+            
+            # Draw center dot
+            cv2.circle(img, (px, py), 3, box_color, -1)
+    
     def _render_occlusion_grid(self):
         """
-        Enhanced rendering with risk visualization.
+        Enhanced rendering with risk visualization and pedestrian markers.
         """
         grid = self._compute_occlusion_grid()
         
@@ -620,6 +933,9 @@ class OcclusionAwareController(VehicleController):
         
         center_px = self.frame_size_px // 2
         
+        # Draw pedestrians on grid
+        self._draw_pedestrians_on_grid(img, center_px, scale)
+        
         # Draw FOV indicators for regions
         # Forward cone
         fwd_angle = 30
@@ -630,7 +946,9 @@ class OcclusionAwareController(VehicleController):
             cv2.line(img, (center_px, center_px), (end_x, end_y), (100, 100, 0), 1)
         
         # Draw ego with risk-based color
-        if self.current_risk >= self.risk_emergency:
+        if self.pedestrian_in_path:
+            ego_color = (255, 0, 255)    # Magenta - pedestrian stop
+        elif self.current_risk >= self.risk_emergency:
             ego_color = (0, 0, 255)      # Red - emergency
         elif self.current_risk >= self.risk_danger:
             ego_color = (0, 100, 255)    # Orange - danger
@@ -647,7 +965,9 @@ class OcclusionAwareController(VehicleController):
         cv2.putText(img, f"Target: {self.target_speed_ms*3.6:.1f} km/h", (10, 40), font, 0.45, (255, 255, 255), 1)
         
         # Risk level indicator
-        if self.current_risk >= self.risk_emergency:
+        if self.pedestrian_in_path:
+            cv2.putText(img, "PED STOP!", (10, 60), font, 0.45, (0, 0, 255), 2)
+        elif self.current_risk >= self.risk_emergency:
             cv2.putText(img, "EMERGENCY", (10, 60), font, 0.45, (0, 0, 255), 2)
         elif self.current_risk >= self.risk_danger:
             cv2.putText(img, "DANGER", (10, 60), font, 0.45, (0, 100, 255), 2)
@@ -656,16 +976,29 @@ class OcclusionAwareController(VehicleController):
         else:
             cv2.putText(img, "CLEAR", (10, 60), font, 0.45, (0, 255, 0), 1)
         
+        # Pedestrian info
+        if self.detected_pedestrians:
+            num_peds = len(self.detected_pedestrians)
+            cv2.putText(img, f"Peds: {num_peds}", (10, 80), font, 0.4, (0, 255, 255), 1)
+            if self.closest_ped_distance < float('inf'):
+                cv2.putText(img, f"Closest: {self.closest_ped_distance:.1f}m", (10, 95), font, 0.35, (0, 255, 255), 1)
+        
         # Region risks
-        y_offset = 80
+        y_offset = 115
         for region, risk in self.risk_breakdown.get('region_risks', {}).items():
             if risk > 0.1:
                 cv2.putText(img, f"{region}: {risk:.2f}", (10, y_offset), font, 0.35, (200, 200, 200), 1)
                 y_offset += 15
         
-        if self.grid_writer is not None:
-            self.grid_writer.write(img)
-            self.grid_frame_count += 1
+        # Write video frame (with rate limiting to avoid duplicate timestamps)
+        current_time = time.time()
+        min_frame_interval = 1.0 / 25.0  # Max 25 fps to avoid pts issues
+        
+        if self.grid_writer is not None and not self._video_writer_closed:
+            if current_time - self._last_frame_time >= min_frame_interval:
+                self.grid_writer.write(img)
+                self.grid_frame_count += 1
+                self._last_frame_time = current_time
         
         return grid
     
@@ -676,9 +1009,10 @@ class OcclusionAwareController(VehicleController):
         1. Compute occlusion grid
         2. Extract risk features from all regions
         3. Monitor adjacent vehicle behavior
-        4. Fuse risks with temporal filtering
-        5. Compute safe speed
-        6. Apply smooth control
+        4. Detect pedestrians in path
+        5. Fuse risks with temporal filtering
+        6. Compute safe speed
+        7. Apply smooth control
         """
         if self.ego_vehicle is None:
             return
@@ -693,13 +1027,17 @@ class OcclusionAwareController(VehicleController):
         # 3. Monitor adjacent vehicles
         social_risk, social_details = self._monitor_vehicles()
         
-        # 4. Fuse risks
+        # 4. Detect pedestrians
+        ped_risk, ped_should_stop, detected_peds = self._detect_pedestrians()
+        
+        # 5. Fuse risks
         occlusion_risk = features['weighted_risk']
         
-        # Combine occlusion risk with social cues
+        # Combine all risk sources
         combined_risk = max(
             occlusion_risk,
-            social_risk * self.social_cue_weight
+            social_risk * self.social_cue_weight,
+            ped_risk  # Pedestrian risk takes priority
         )
         
         # Temporal smoothing (avoid sudden changes)
@@ -710,11 +1048,19 @@ class OcclusionAwareController(VehicleController):
         # Use max of recent risks for safety
         self.current_risk = max(self.risk_history) if self.risk_history else combined_risk
         
-        # 5. Get minimum forward distance
+        # 6. Get minimum forward distance
         min_forward_dist = features['min_distances'].get('forward', float('inf'))
         
-        # 6. Compute target speed
-        self.target_speed_ms = self._compute_target_speed(self.current_risk, min_forward_dist)
+        # If pedestrian detected in path, use pedestrian distance as constraint
+        if self.pedestrian_in_path and self.closest_ped_distance < min_forward_dist:
+            min_forward_dist = self.closest_ped_distance
+        
+        # 7. Compute target speed
+        if ped_should_stop:
+            # EMERGENCY STOP for pedestrian
+            self.target_speed_ms = 0.0
+        else:
+            self.target_speed_ms = self._compute_target_speed(self.current_risk, min_forward_dist)
         
         # Log significant events
         if self.current_risk >= self.risk_danger and self.frames_in_danger == 0:
@@ -723,6 +1069,8 @@ class OcclusionAwareController(VehicleController):
             print(f"   Min distance: {min_forward_dist:.1f}m")
             if social_details.get('hard_braking'):
                 print(f"   Adjacent vehicle braking!")
+            if detected_peds:
+                print(f"   Pedestrians detected: {len(detected_peds)}")
             print(f"   Target speed: {self.target_speed_ms*3.6:.1f} km/h")
         
         if self.current_risk >= self.risk_caution:
@@ -730,22 +1078,31 @@ class OcclusionAwareController(VehicleController):
         else:
             self.frames_in_danger = 0
         
-        # 7. Apply control
+        # 8. Apply control
         if not self.ego_moving:
             return
         
-        self._apply_control(self.target_speed_ms)
+        # Emergency stop for pedestrian overrides everything
+        if ped_should_stop:
+            self.ego_control.throttle = 0.0
+            self.ego_control.brake = 1.0
+            self.ego_vehicle.apply_control(self.ego_control)
+        else:
+            self._apply_control(self.target_speed_ms)
     
     def get_metrics(self):
         """Return current metrics for HUD display.
         
         Returns:
-            dict: Metrics including risk_level, target_speed_kmh, etc.
+            dict: Metrics including risk_level, target_speed_kmh, pedestrian info, etc.
         """
         return {
             'risk_level': self.current_risk,
             'target_speed_kmh': self.target_speed_ms * 3.6 if self.target_speed_ms else self.ego_speed_kmh,
-            'mode': 'OCCLUSION-AWARE'
+            'mode': 'OCCLUSION-AWARE',
+            'pedestrian_in_path': self.pedestrian_in_path,
+            'pedestrian_distance': self.closest_ped_distance if self.closest_ped_distance < float('inf') else None,
+            'num_pedestrians': len(self.detected_pedestrians)
         }
     
     def destroy(self):

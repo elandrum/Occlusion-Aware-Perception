@@ -49,8 +49,9 @@ def run_aware_controller(world, scenario_data, scenario):
     No scenario-specific logic needed. The controller:
     1. Analyzes 360° occlusion grid
     2. Monitors adjacent vehicle behavior (social cues)
-    3. Computes risk from multiple factors using ML-like model
-    4. Adjusts speed based on risk level with temporal smoothing
+    3. Uses YOLO + Depth camera for pedestrian detection
+    4. Computes risk from multiple factors using ML-like model
+    5. Adjusts speed based on risk level with temporal smoothing
     """
     print("\n" + "="*60)
     print("🧠 UNIVERSAL OCCLUSION-AWARE CONTROLLER")
@@ -60,16 +61,25 @@ def run_aware_controller(world, scenario_data, scenario):
     print("  • 360° occlusion grid analysis (60x60, 30m range)")
     print("  • Region-of-interest (ROI) risk weighting")
     print("  • Social cue detection (adjacent vehicle braking)")
+    print("  • YOLO + Depth pedestrian detection (vision-based)")
     print("  • Temporal risk smoothing (20-frame memory)")
     print("  • PID-like smooth control")
     print("="*60)
 
-    # Initialize universal occlusion-aware controller
-    vehicle_ctrl = OcclusionAwareController(world)
+    # Setup camera FIRST (needed for vision-based detection)
+    camera_mgr = CameraManager(world)
+    camera_mgr.setup_camera(scenario_data["ego_vehicle"])
+    camera_mgr.update_metrics({'mode': 'OCCLUSION-AWARE'})
+
+    # Initialize universal occlusion-aware controller with vision detection
+    vehicle_ctrl = OcclusionAwareController(world, use_vision_detection=True)
     vehicle_ctrl.set_ego_vehicle(
         scenario_data["ego_vehicle"],
         scenario_data["ego_speed_kmh"],
     )
+    
+    # Connect camera to controller for vision-based pedestrian detection
+    vehicle_ctrl.set_camera_manager(camera_mgr)
     
     if "occluders" in scenario_data:
         vehicle_ctrl.set_occluders(scenario_data["occluders"])
@@ -81,11 +91,6 @@ def run_aware_controller(world, scenario_data, scenario):
     pedestrian_ctrl = scenario_data.get("pedestrian_ctrl")
     moving_vehicle_ctrl = scenario_data.get("moving_vehicle_ctrl")
     vehicle_ctrl_scenario = scenario_data.get("vehicle_ctrl")  # For scenario4
-
-    # Setup camera
-    camera_mgr = CameraManager(world)
-    camera_mgr.setup_camera(scenario_data["ego_vehicle"])
-    camera_mgr.update_metrics({'mode': 'OCCLUSION-AWARE'})
 
     print("\nScenario running - Press Ctrl+C to stop...\n")
 
