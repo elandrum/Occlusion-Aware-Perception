@@ -13,7 +13,8 @@ import carla
 
 from occl_controller.controller import VehicleController
 from .camera import CameraManager
-from .scenario1 import Scenario1  # scenario file lives in occl_simulator/scenario1.py
+from .scenario1 import Scenario1
+from .scenario2 import Scenario2
 
 
 def print_usage():
@@ -22,38 +23,54 @@ def print_usage():
     print("  python -m occl_simulator <scenario_name> [controller_name]")
     print("\nAvailable scenarios:")
     print("  scenario1  - Pedestrian crossing between two trucks")
+    print("  scenario2  - Pedestrian crossing between parked cars on the left")
     print("\nAvailable controllers:")
-    print("  default    - Basic collision scenario (default)")
-    print("\nExample:")
+    print("  default    - Naive cruise controller (alias for 'naive')")
+    print("  naive      - Same as default (ignores occlusion info)")
+    print("  occl       - Occlusion-aware controller (uses occlusion grid)")
+    print("\nExamples:")
     print("  python -m occl_simulator scenario1")
     print("  python -m occl_simulator scenario1 default")
+    print("  python -m occl_simulator scenario1 occl")
     print()
 
 
-def run_default_controller(world, scenario_data, scenario):
-    """Default controller: Simple collision scenario"""
-    print("\nRunning with default controller...")
+def run_default_controller(world, scenario_data, scenario, controller_name: str):
+    """Run scenario with the chosen controller mode."""
+    print("\nRunning controller...")
     print("Logic: Vehicle drives at constant speed, pedestrian crosses")
 
+    # Map CLI name -> internal mode
+    name_l = controller_name.lower()
+    if name_l in ("default", "naive"):
+        mode = "naive"
+    elif name_l in ("occl", "occlusion", "occlusion_aware"):
+        mode = "occl"
+    else:
+        print(f"[Warning] Unknown controller '{controller_name}', falling back to naive")
+        mode = "naive"
+
     # Initialize vehicle controller
-    vehicle_ctrl = VehicleController(world)
+    vehicle_ctrl = VehicleController(world, mode=mode)
     vehicle_ctrl.set_ego_vehicle(
         scenario_data["ego_vehicle"],
         scenario_data["ego_speed_kmh"],
     )
+
+    # Optional explicit occluders (e.g., scenario1 trucks)
     if "occluders" in scenario_data:
         vehicle_ctrl.set_occluders(scenario_data["occluders"])
         print(f"Using {len(scenario_data['occluders'])} explicit occluder(s)")
     else:
-        print("Using default occluders: all non-ego vehicles")    
-    
+        print("Using default occluders: all non-ego vehicles")
+
     pedestrian_ctrl = scenario_data["pedestrian_ctrl"]
 
     # Setup camera
     camera_mgr = CameraManager(world)
     camera_mgr.setup_camera(scenario_data["ego_vehicle"])
 
-    print("\nScenario running - Press Ctrl+C to stop...\n")
+    print(f"\nScenario running in '{mode}' mode - Press Ctrl+C to stop...\n")
 
     start_time = time.time()
     ego_start_delay = 2.0
@@ -66,10 +83,10 @@ def run_default_controller(world, scenario_data, scenario):
             if current_time > ego_start_delay and not vehicle_ctrl.ego_moving:
                 vehicle_ctrl.start_movement()
 
-            # Update controllers
+            # Get pedestrian positions for visualization (optional)
             ped_locations = getattr(pedestrian_ctrl, "pedestrians", [])
 
-            # Update ego controller with pedestrian positions (for grid video)
+            # Update ego controller (will also render occlusion grid each frame)
             vehicle_ctrl.update(ped_locations)
 
             # Update pedestrian movement
@@ -78,10 +95,12 @@ def run_default_controller(world, scenario_data, scenario):
             # Tick world
             world.tick()
             time.sleep(0.05)  # 20 Hz tick
+
     except KeyboardInterrupt:
         print("\n\nScenario interrupted by user")
     finally:
         camera_mgr.destroy()
+        vehicle_ctrl.destroy()
 
 
 def main():
@@ -104,6 +123,7 @@ def main():
     # Map scenario names to classes
     SCENARIOS = {
         "scenario1": Scenario1,
+        "scenario2": Scenario2,
     }
 
     if scenario_name not in SCENARIOS:
@@ -139,18 +159,13 @@ def main():
 
         # Run with the specified controller
         try:
-            if controller_name == "default":
-                run_default_controller(world, scenario_data, scenario)
-            else:
-                print(f"Error: Unknown controller '{controller_name}'")
-                sys.exit(1)
+            run_default_controller(world, scenario_data, scenario, controller_name)
         finally:
             scenario.cleanup()
 
     except Exception as e:
         print(f"\nError running scenario: {e}")
         import traceback
-
         traceback.print_exc()
         sys.exit(1)
 
