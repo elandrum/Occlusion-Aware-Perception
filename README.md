@@ -42,7 +42,7 @@ conda config --set auto_activate_base false
 source ~/.bashrc
 
 conda activate base
-conda create -n carla python=3.8 conda -c conda-forge
+conda create -n carla python=3.8 conda -c conda-forge # only if setting up from scratch
 ~/.conda/envs/carla/condabin/conda init bash
 
 conda activate carla
@@ -75,7 +75,7 @@ Inside container:
 ```
 source ~/.bashrc
 conda activate carla
-pip install -U carla==0.9.15
+pip install -U carla==0.9.15 # only if setting up from scratch
 ```
 ---
 
@@ -98,7 +98,8 @@ CARLA 0.9.15 connected at 127.0.0.1:2000.
 Inside same container after CARLA is running:
 ```
 cd ~/Occlusion-Aware-Perception
-PYTHONPATH=. python3 -m occl_simulator scenario1
+PYTHONPATH=. python3 -m occl_simulator scenario1 naive   # baseline ACC-like controller
+PYTHONPATH=. python3 -m occl_simulator scenario1 occl    # occlusion + pedestrian-aware controller
 ```
 This:
 - Connects to CARLA
@@ -165,6 +166,50 @@ Actors are only used as occluders if they have a bounding_box attribute (typical
 
 For most new scenarios you don’t need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., “only these two trucks should occlude, parked cars should not”) do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
 ---
+
+## Pedestrians (Visualization + Behavior)
+
+Pedestrians for a scenario are spawned and scripted by
+`occl_simulator/actors_peds.py` based on `test_data/scenario*_peds.json`.
+
+Each simulation tick, the controller:
+
+1. **Projects pedestrians into the ego frame**  
+   - Uses the ego’s forward and right vectors to express each pedestrian
+     in ego-centric coordinates `(x_local, y_local)`, where:
+       - `x_local` = right
+       - `y_local` = forward
+   - Filters to pedestrians that are:
+       - In front of the ego (`y_local > 0`)
+       - Within a configurable “lane width” band (≈ ±2.5 m)
+       - Within the grid range (≈ 20 m × 20 m around the car)
+
+2. **Renders pedestrians into the occlusion grid video**  
+   - The occlusion grid is a 40×40 top-down grid centered on the ego:
+       - Free cells → dark gray
+       - Occluded cells → red
+       - Ego → green dot at the center
+       - Pedestrians → blue dots in the cells corresponding to their projected
+         positions
+   - The grid video is written to `output/grid_<timestamp>.mp4`.
+
+3. **Uses pedestrians in the occlusion-aware controller (`occl` mode)**  
+   - Derives simple hazard metrics from the ego-centric positions:
+       - Whether any pedestrian is ahead in the lane
+       - Whether any pedestrian is within a “near” zone (~< 18 m)
+       - Whether any pedestrian is within a “stop” zone (~< 10 m)
+   - The controller then:
+       - Caps the target speed when a pedestrian is ahead (the closer the ped,
+         the lower the cap; very close ⇒ creep speed).
+       - Triggers hard braking when a pedestrian is in the stop zone
+         directly in the lane.
+       - Once the pedestrian leaves the hazard zone, the controller gradually
+         returns to the occlusion-based target speed and the ego continues
+         driving.
+
+These thresholds (lane width / near distance / stop distance) are defined as
+constants in `VehicleController._compute_pedestrian_hazards` and can be tuned
+per-project.
 
 # Adding New Scenarios
 
