@@ -2,7 +2,7 @@
   "pedestrians": [
     {
       "location": {
-        "x": 10.0,
+        "x": 5.0,
         "y": 12.0,
         "z": 1.03
       },
@@ -12,12 +12,12 @@
         "roll": 0.0
       },
       "target_location": {
-        "x": 10.0,
+        "x": 5.0,
         "y": -5.0,
         "z": 1.03
       },
       "speed_ms": 1.4,
-      "start_delay": 3.0
+      "start_delay": 5.0
     }
   ]
 }

@@ -6,6 +6,7 @@ Handles pedestrian spawning and movement logic
 import carla
 import math
 import random
+import time
 
 
 class PedestrianController:
@@ -14,6 +15,7 @@ class PedestrianController:
         self.blueprint_library = blueprint_library
         self.pedestrians = []
         self.ped_targets = []
+        self.start_time = None  # Track when movement updates started
         
     def spawn_pedestrians(self, pedestrian_config):
         """Spawn pedestrians from configuration"""
@@ -66,10 +68,13 @@ class PedestrianController:
                     )
                     self.ped_targets.append({
                         'location': target,
-                        'speed': ped_info.get('speed_ms', 1.4)
+                        'speed': ped_info.get('speed_ms', 1.4),
+                        'start_delay': ped_info.get('start_delay', 0.0),  # Delay before starting to walk
+                        'started': False  # Track if pedestrian has started moving
                     })
                     speed = ped_info.get('speed_ms', 1.4)
-                    print(f"Pedestrian {i+1} will move to ({target.x:.1f}, {target.y:.1f}, {target.z:.1f}) at {speed} m/s")
+                    delay = ped_info.get('start_delay', 0.0)
+                    print(f"Pedestrian {i+1} will move to ({target.x:.1f}, {target.y:.1f}, {target.z:.1f}) at {speed} m/s (delay: {delay}s)")
                 else:
                     self.ped_targets.append(None)
             else:
@@ -83,11 +88,29 @@ class PedestrianController:
         if not self.pedestrians or not self.ped_targets:
             return
         
+        # Initialize start time on first call
+        if self.start_time is None:
+            self.start_time = time.time()
+        
+        current_time = time.time() - self.start_time
+        
         for i, pedestrian in enumerate(self.pedestrians):
             if i < len(self.ped_targets) and self.ped_targets[i] is not None:
                 try:
-                    current_location = pedestrian.get_location()
                     target_info = self.ped_targets[i]
+                    start_delay = target_info.get('start_delay', 0.0)
+                    
+                    # Check if delay has passed
+                    if current_time < start_delay:
+                        # Still waiting - don't move yet
+                        continue
+                    
+                    # Log when pedestrian starts moving (once)
+                    if not target_info.get('started', False):
+                        print(f"\n🚶 Pedestrian {i+1} starting to cross! (after {start_delay}s delay)")
+                        target_info['started'] = True
+                    
+                    current_location = pedestrian.get_location()
                     target = target_info['location']
                     ped_speed = target_info['speed']
                     

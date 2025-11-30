@@ -120,6 +120,25 @@ PYTHONPATH=. python3 -m occl_simulator scenario2
 PYTHONPATH=. python3 -m occl_simulator scenario4
 ```
 
+## Running with Occlusion-Aware Controller
+
+The framework includes an occlusion-aware controller that autonomously slows down or stops based on detected occlusion:
+
+```
+# Run Scenario 1 with occlusion-aware controller
+PYTHONPATH=. python3 -m occl_simulator scenario1 aware
+
+# Run Scenario 2 with occlusion-aware controller
+PYTHONPATH=. python3 -m occl_simulator scenario2 aware
+```
+
+### Controller Comparison
+
+| Controller | Command | Behavior |
+|------------|---------|----------|
+| `default`  | `python -m occl_simulator scenario1` | Baseline - drives at constant speed, no occlusion reaction |
+| `aware`    | `python -m occl_simulator scenario1 aware` | Occlusion-aware - slows/stops based on detected hazards |
+
 ---
 
 # Scenario Descriptions
@@ -198,7 +217,48 @@ A scenario can optionally override this by returning an occluders list in its sc
 
 Actors are only used as occluders if they have a bounding_box attribute (typically vehicles, trucks, large static props, etc.).
 
-For most new scenarios you don’t need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., “only these two trucks should occlude, parked cars should not”) do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
+For most new scenarios you don't need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., "only these two trucks should occlude, parked cars should not") do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
+
+---
+
+# Occlusion-Aware Controller
+
+The `OcclusionAwareController` class implements autonomous driving decisions based on occlusion detection. It extends the baseline `VehicleController` with:
+
+## Key Features
+
+1. **Forward Occlusion Analysis**: Scans a ±45° cone ahead of the ego vehicle to detect occluded regions
+2. **Safe Speed Calculation**: Uses stopping distance formula: `v_safe = √(2 × a_max × d_occluded)`
+3. **Adjacent Vehicle Monitoring**: Detects when nearby vehicles brake hard (social cue)
+4. **Risk-Based Decision Making**: Combines multiple factors into a 0-1 risk level
+
+## Safety Logic
+
+| Risk Level | Action |
+|------------|--------|
+| < 0.4 | Normal driving at target speed |
+| 0.4 - 0.8 | Reduce speed to safe level based on occlusion distance |
+| > 0.8 | Emergency braking (also triggered by adjacent vehicle braking) |
+
+## Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `a_max_decel` | 4.0 m/s² | Maximum comfortable deceleration |
+| `min_safe_speed_kmh` | 5.0 km/h | Minimum creep speed when occluded |
+| `occlusion_danger_threshold` | 0.3 | Fraction of forward cells triggering caution |
+| `forward_scan_angle` | 45° | Half-angle of forward scanning cone |
+
+## How It Works
+
+1. **Every tick**: Compute occlusion grid using ray-casting
+2. **Analyze**: Count occluded cells in forward cone, find nearest occluded region
+3. **Monitor**: Check if adjacent vehicles are braking (speed drop > 0.3 m/s per frame)
+4. **Calculate**: Safe speed based on stopping distance to nearest occlusion
+5. **Apply**: Throttle/brake based on risk level
+
+This allows the ego vehicle to safely slow down when approaching areas where pedestrians or vehicles might be hidden, such as between parked trucks or in blind spots created by adjacent traffic.
+
 ---
 
 # Adding New Scenarios
