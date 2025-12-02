@@ -16,7 +16,8 @@ from .camera import CameraManager
 from .scenario1 import Scenario1
 from .scenario2 import Scenario2
 from .scenario3 import Scenario3
-from .scenario4 import Scenario4, EgoTurnController
+from .scenario4 import Scenario4
+from .turn_controller import EgoTurnController
 
 
 def print_usage():
@@ -81,6 +82,12 @@ def run_aware_controller(world, scenario_data, scenario):
     # Connect camera to controller for vision-based pedestrian detection
     vehicle_ctrl.set_camera_manager(camera_mgr)
     
+    # Enable oncoming vehicle detection ONLY for scenario4 (red-light runner)
+    # Scenario4 has a "red_light_runner" in the vehicle_ctrl, use that to identify it
+    if scenario_data.get("vehicle_ctrl") and hasattr(scenario_data.get("vehicle_ctrl"), 'get_vehicle_by_id'):
+        if scenario_data["vehicle_ctrl"].get_vehicle_by_id("red_light_runner"):
+            vehicle_ctrl.set_oncoming_detection(True)
+    
     if "occluders" in scenario_data:
         vehicle_ctrl.set_occluders(scenario_data["occluders"])
         print(f"Using {len(scenario_data['occluders'])} explicit occluder(s)")
@@ -96,7 +103,7 @@ def run_aware_controller(world, scenario_data, scenario):
     # Setup ego turn controller if turn config is provided (scenario 4)
     ego_turn_ctrl = None
     if turn_config:
-        from .scenario4 import EgoTurnController
+        from .turn_controller import EgoTurnController
         ego_turn_ctrl = EgoTurnController(world)
         ego_turn_ctrl.set_ego_vehicle(
             scenario_data["ego_vehicle"],
@@ -280,9 +287,11 @@ def run_default_controller(world, scenario_data, scenario):
             # Run YOLO detection for visualization only (no action taken)
             rgb_frame = camera_mgr.get_raw_frame()
             depth_frame = camera_mgr.get_depth_frame()
-            overlay = rgb_frame
             
             if rgb_frame is not None:
+                # Start with copy of raw frame
+                overlay = rgb_frame.copy()
+                
                 # Detect and draw pedestrians
                 if ped_detector:
                     ped_detections = ped_detector.detect(rgb_frame)
@@ -295,12 +304,15 @@ def run_default_controller(world, scenario_data, scenario):
                 if veh_detector:
                     veh_detections = veh_detector.detect(rgb_frame)
                     if veh_detections:
-                        veh_positions = veh_detector.estimate_3d_positions(veh_detections, depth_frame)
-                        overlay = veh_detector.draw_detections(overlay, veh_positions)
+                        if depth_frame is not None:
+                            veh_positions = veh_detector.estimate_3d_positions(veh_detections, depth_frame)
+                            overlay = veh_detector.draw_detections(overlay, veh_positions)
+                        else:
+                            # No depth - draw without 3D info
+                            overlay = veh_detector.draw_detections(overlay, None)
                 
-                # Set the overlay with detection boxes
-                if overlay is not None:
-                    camera_mgr.set_detection_overlay(overlay)
+                # Always set the overlay (with or without detection boxes)
+                camera_mgr.set_detection_overlay(overlay)
             
             # Update camera HUD with speed
             camera_mgr.update_metrics({'speed_kmh': vehicle_ctrl.get_speed() * 3.6})
@@ -336,14 +348,14 @@ def run_default_controller(world, scenario_data, scenario):
 
 def run_scenario4_default_controller(world, scenario_data, scenario):
     """
-    Baseline controller for Scenario 4: Left turn with hidden red-light runner.
+    Baseline controller for scenarios with turn handling (Scenario 3, 4).
     Uses EgoTurnController for turn handling, but no occlusion awareness.
     Uses YOLO for detection visualization only (no action taken).
     """
     print("\n" + "="*60)
-    print("🚗 SCENARIO 4 BASELINE (LEFT TURN - NO OCCLUSION AWARENESS)")
+    print("🚗 BASELINE WITH TURN (NO OCCLUSION AWARENESS)")
     print("="*60)
-    print("Mode: Turns left without checking for hidden traffic")
+    print("Mode: Turns without checking for hidden traffic")
     print("YOLO: Detection visualization only (no action)")
     print("="*60)
 
@@ -355,12 +367,16 @@ def run_scenario4_default_controller(world, scenario_data, scenario):
         scenario_data.get("turn_config")
     )
 
-    vehicle_ctrl = scenario_data["vehicle_ctrl"]
+    # Get vehicle controller if present (scenario4 has moving vehicles)
+    vehicle_ctrl = scenario_data.get("vehicle_ctrl")
+    
+    # Get pedestrian controller if present (scenario3 has pedestrians)
+    pedestrian_ctrl = scenario_data.get("pedestrian_ctrl")
 
     # Setup camera
     camera_mgr = CameraManager(world)
     camera_mgr.setup_camera(scenario_data["ego_vehicle"])
-    camera_mgr.update_metrics({'mode': 'BASELINE (LEFT TURN)'})
+    camera_mgr.update_metrics({'mode': 'BASELINE (TURN)'})
     
     # Setup YOLO detectors for visualization only
     ped_detector = None
@@ -403,17 +419,23 @@ def run_scenario4_default_controller(world, scenario_data, scenario):
             if current_time > ego_start_delay:
                 if not ego_ctrl.ego_moving:
                     ego_ctrl.start_movement()
-                    vehicle_ctrl.start_movement()
+                    if vehicle_ctrl:
+                        vehicle_ctrl.start_movement()
 
             ego_ctrl.update()
-            vehicle_ctrl.update()
+            if vehicle_ctrl:
+                vehicle_ctrl.update()
+            if pedestrian_ctrl:
+                pedestrian_ctrl.update_movement()
             
             # Run YOLO detection for visualization only (no action taken)
             rgb_frame = camera_mgr.get_raw_frame()
             depth_frame = camera_mgr.get_depth_frame()
-            overlay = rgb_frame
             
             if rgb_frame is not None:
+                # Start with copy of raw frame
+                overlay = rgb_frame.copy()
+                
                 # Detect and draw pedestrians
                 if ped_detector:
                     ped_detections = ped_detector.detect(rgb_frame)
@@ -426,34 +448,38 @@ def run_scenario4_default_controller(world, scenario_data, scenario):
                 if veh_detector:
                     veh_detections = veh_detector.detect(rgb_frame)
                     if veh_detections:
-                        veh_positions = veh_detector.estimate_3d_positions(veh_detections, depth_frame)
-                        overlay = veh_detector.draw_detections(overlay, veh_positions)
+                        if depth_frame is not None:
+                            veh_positions = veh_detector.estimate_3d_positions(veh_detections, depth_frame)
+                            overlay = veh_detector.draw_detections(overlay, veh_positions)
+                        else:
+                            # No depth - draw without 3D info
+                            overlay = veh_detector.draw_detections(overlay, None)
                 
-                # Set the overlay with detection boxes
-                if overlay is not None:
-                    camera_mgr.set_detection_overlay(overlay)
+                # Always set the overlay (with or without detection boxes)
+                camera_mgr.set_detection_overlay(overlay)
             
             # Update camera HUD with speed
             camera_mgr.update_metrics({'speed_kmh': ego_ctrl.get_speed() * 3.6})
             
             if ego_ctrl.is_turning_now() and not turn_logged:
                 print("\n" + "="*50)
-                print("🔄 EGO TURNING LEFT - View blocked by trucks!")
-                print("   Red-light runner approaching (HIDDEN)")
+                print("🔄 EGO TURNING - View may be blocked!")
                 print("="*50)
                 turn_logged = True
             
-            ego_loc = ego_ctrl.get_location()
-            runner = vehicle_ctrl.get_vehicle_by_id("red_light_runner")
-            if ego_loc and runner and not collision_zone_logged:
-                runner_loc = runner['actor'].get_location()
-                distance = ego_loc.distance(runner_loc)
-                if distance < 20.0:
-                    print("\n" + "="*50)
-                    print("⚠️  COLLISION IMMINENT!")
-                    print(f"   Distance to red-light runner: {distance:.1f}m")
-                    print("="*50)
-                    collision_zone_logged = True
+            # Check for red-light runner collision (scenario4 specific)
+            if vehicle_ctrl and not collision_zone_logged:
+                ego_loc = ego_ctrl.get_location()
+                runner = vehicle_ctrl.get_vehicle_by_id("red_light_runner")
+                if ego_loc and runner:
+                    runner_loc = runner['actor'].get_location()
+                    distance = ego_loc.distance(runner_loc)
+                    if distance < 20.0:
+                        print("\n" + "="*50)
+                        print("⚠️  COLLISION IMMINENT!")
+                        print(f"   Distance to red-light runner: {distance:.1f}m")
+                        print("="*50)
+                        collision_zone_logged = True
 
             world.tick()
             time.sleep(0.05)
@@ -462,9 +488,10 @@ def run_scenario4_default_controller(world, scenario_data, scenario):
         print("\n\nScenario interrupted by user")
     finally:
         print("\nFinal vehicle speeds:")
-        speeds = vehicle_ctrl.get_vehicle_speeds()
-        for veh_id, speed in speeds.items():
-            print(f"  {veh_id}: {speed:.1f} km/h")
+        if vehicle_ctrl:
+            speeds = vehicle_ctrl.get_vehicle_speeds()
+            for veh_id, speed in speeds.items():
+                print(f"  {veh_id}: {speed:.1f} km/h")
         ego_speed = ego_ctrl.get_speed() * 3.6
         print(f"  ego: {ego_speed:.1f} km/h")
         camera_mgr.destroy()
@@ -529,8 +556,8 @@ def main():
         try:
             if controller_name == "default":
                 # Baseline controller - no occlusion awareness
-                if scenario_name == "scenario4":
-                    # Scenario 4 needs special turn handling
+                if scenario_name == "scenario4" or (scenario_name == "scenario3" and scenario_data.get("turn_config")):
+                    # Scenarios with turn handling
                     run_scenario4_default_controller(world, scenario_data, scenario)
                 else:
                     # Universal baseline for all other scenarios

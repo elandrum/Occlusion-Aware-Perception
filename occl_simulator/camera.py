@@ -9,6 +9,7 @@ import carla
 import os
 import cv2
 import numpy as np
+import time
 from datetime import datetime
 
 
@@ -43,6 +44,8 @@ class CameraManager:
         # For optional direct camera-only video
         self.video_writer = None
         self.video_path = None
+        self._video_writer_closed = False
+        self._last_video_frame_time = 0.0  # Track last frame time to avoid duplicate pts
         
         # HUD settings
         self.show_hud = True
@@ -297,7 +300,8 @@ class CameraManager:
         # If we have detection overlay, use that instead of raw frame
         if self.detection_overlay is not None:
             array = self.detection_overlay.copy()
-            self.detection_overlay = None  # Clear after use
+            # Don't clear immediately - keep it for next frame until updated
+            # self.detection_overlay = None
 
         # Apply HUD overlay
         array_with_hud = self._render_hud(array)
@@ -311,8 +315,16 @@ class CameraManager:
             img_path = os.path.join(self.image_dir, f"frame_{self.frame_count:06d}.png")
             cv2.imwrite(img_path, array_with_hud)
 
-            if self.video_writer is not None:
-                self.video_writer.write(array_with_hud)
+            # Write video frame with rate limiting to avoid duplicate pts
+            if self.video_writer is not None and not self._video_writer_closed:
+                current_time = time.time()
+                min_frame_interval = 1.0 / 25.0  # Max 25 fps to avoid pts issues
+                if current_time - self._last_video_frame_time >= min_frame_interval:
+                    try:
+                        self.video_writer.write(array_with_hud)
+                        self._last_video_frame_time = current_time
+                    except Exception as e:
+                        print(f"[Warning] Video write error: {e}")
 
         self.frame_count += 1
         self.frame_timestamps.append(image.timestamp)
@@ -374,6 +386,16 @@ class CameraManager:
     # Cleanup
     # -----------------------------------------------------------
     def destroy(self):
+        # Release video writer first to prevent segfault
+        if self.video_writer is not None and not self._video_writer_closed:
+            try:
+                self._video_writer_closed = True
+                self.video_writer.release()
+                self.video_writer = None
+                print(f"Camera video saved to: {self.video_path}")
+            except Exception as e:
+                print(f"[Warning] Error releasing video writer: {e}")
+        
         if self.camera is not None:
             self.camera.stop()
             self.camera.destroy()
@@ -383,10 +405,6 @@ class CameraManager:
             self.depth_camera.stop()
             self.depth_camera.destroy()
             print("Depth Camera destroyed.")
-
-        if self.video_writer is not None:
-            self.video_writer.release()
-            print(f"Camera-only video saved to: {self.video_path}")
 
 
 def main():

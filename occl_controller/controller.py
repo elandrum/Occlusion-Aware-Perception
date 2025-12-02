@@ -351,6 +351,7 @@ class OcclusionAwareController(VehicleController):
         self.detected_vehicles = []      # List of detected vehicles with bounding boxes
         self.oncoming_vehicle = False    # Flag for oncoming vehicle emergency
         self.closest_veh_distance = float('inf')
+        self.enable_oncoming_detection = False  # Only enable for scenario4 (left turn with red-light runner)
         
         # Vision-based detection
         self.use_vision_detection = use_vision_detection
@@ -432,6 +433,14 @@ class OcclusionAwareController(VehicleController):
         """Clear external steering control"""
         self.external_steer = None
         self.use_external_steering = False
+    
+    def set_oncoming_detection(self, enabled):
+        """Enable/disable oncoming vehicle detection (only for scenario4)"""
+        self.enable_oncoming_detection = enabled
+        if enabled:
+            print("✓ Oncoming vehicle detection ENABLED (scenario4)")
+        else:
+            print("✓ Oncoming vehicle detection DISABLED")
     
     def _init_risk_model(self):
         """
@@ -658,6 +667,9 @@ class OcclusionAwareController(VehicleController):
             self.detected_pedestrians = []
             self.pedestrian_in_path = False
             self.closest_ped_distance = float('inf')
+            # Still set overlay with raw frame (no detections to draw)
+            self._ped_overlay = rgb_frame.copy()
+            self.camera_manager.set_detection_overlay(rgb_frame.copy())
             return 0.0, False, []
         
         # Estimate 3D positions using depth
@@ -695,8 +707,10 @@ class OcclusionAwareController(VehicleController):
         # Draw detection boxes on frame for visualization
         if rgb_frame is not None:
             overlay = self.ped_detector.draw_detections(rgb_frame, positions_3d)
-            # Will merge with vehicle overlay later if available
+            # Store for vehicle overlay to use as base, and set to camera
             self._ped_overlay = overlay
+            # Set overlay immediately (vehicle detection may override if enabled)
+            self.camera_manager.set_detection_overlay(overlay)
         
         self.detected_pedestrians = detected_peds
         self.pedestrian_in_path = should_stop
@@ -707,7 +721,9 @@ class OcclusionAwareController(VehicleController):
     def _detect_vehicles_vision(self):
         """
         Vision-based vehicle detection using YOLO + Depth camera.
-        Detects oncoming vehicles that are VISIBLE to the camera.
+        Detects vehicles that are VISIBLE to the camera.
+        Always draws detection boxes for visualization.
+        Only takes action (stopping) when enable_oncoming_detection is True (scenario4 only).
         
         Returns:
             - veh_risk: Risk level based on vehicle proximity (0.0 to 1.0)
@@ -735,6 +751,24 @@ class OcclusionAwareController(VehicleController):
         
         # Estimate 3D positions using depth
         positions_3d = self.veh_detector.estimate_3d_positions(detections, depth_frame)
+        
+        # Draw detection boxes on frame for visualization (ALWAYS - regardless of enable_oncoming_detection)
+        if rgb_frame is not None:
+            # Use pedestrian overlay as base if available
+            base_frame = getattr(self, '_ped_overlay', rgb_frame)
+            if positions_3d:
+                overlay = self.veh_detector.draw_detections(base_frame, positions_3d)
+            else:
+                # No depth - draw without 3D info
+                overlay = self.veh_detector.draw_detections(base_frame, None)
+            self.camera_manager.set_detection_overlay(overlay)
+        
+        # If oncoming detection is disabled, don't take action - just return after drawing
+        if not self.enable_oncoming_detection:
+            self.detected_vehicles = []
+            self.oncoming_vehicle = False
+            self.closest_veh_distance = float('inf')
+            return 0.0, False, []
         
         # Get all vehicle threats - ONLY check for ONCOMING vehicles
         # Don't stop for vehicles ahead moving in same direction (trucks)
@@ -774,13 +808,6 @@ class OcclusionAwareController(VehicleController):
                 'bbox': {'width': 2.0, 'height': 1.5}
             }
             detected_vehs.append(veh_info)
-        
-        # Draw detection boxes on frame for visualization
-        if rgb_frame is not None:
-            # Use pedestrian overlay as base if available
-            base_frame = getattr(self, '_ped_overlay', rgb_frame)
-            overlay = self.veh_detector.draw_detections(base_frame, positions_3d)
-            self.camera_manager.set_detection_overlay(overlay)
         
         self.detected_vehicles = detected_vehs
         self.oncoming_vehicle = len(threats['oncoming_vehicles']) > 0
@@ -1026,12 +1053,12 @@ class OcclusionAwareController(VehicleController):
             
             # Draw bounding box
             if ped.get('in_path', False):
-                # Red box for pedestrian in path
-                box_color = (0, 0, 255)
+                # Bright blue box for pedestrian in path
+                box_color = (255, 0, 0)
                 thickness = 3
             else:
-                # Yellow box for nearby pedestrian
-                box_color = (0, 255, 255)
+                # Light blue box for nearby pedestrian
+                box_color = (255, 150, 0)
                 thickness = 2
             
             # Draw rectangle (centered on pedestrian)

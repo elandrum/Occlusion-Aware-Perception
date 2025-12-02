@@ -363,7 +363,7 @@ class VehicleDetector:
         
         frame = frame.copy()
         
-        if positions_3d:
+        if positions_3d and len(positions_3d) > 0:
             for pos in positions_3d:
                 det = pos['detection']
                 x1, y1, x2, y2 = det['bbox']
@@ -401,16 +401,20 @@ class VehicleDetector:
                 conf_text = f"{det['confidence']:.0%}"
                 cv2.putText(frame, conf_text, (x1, y2 + 20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        else:
-            # Just draw detections without 3D info
+        elif self.last_detections:
+            # Draw detections without 3D info (fallback when depth not available)
             for det in self.last_detections:
                 x1, y1, x2, y2 = det['bbox']
                 color = (255, 255, 0)  # Cyan
                 label = f"{det['class_name'].upper()} {det['confidence']:.0%}"
                     
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                
+                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), 
+                             (x1 + label_size[0], y1), color, -1)
                 cv2.putText(frame, label, (x1, y1 - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         return frame
 
