@@ -1,6 +1,10 @@
 # Occlusion-Aware-Perception
 
-A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception and control in challenging occlusion scenarios. The current baseline scenario places a pedestrian crossing between two parked trucks, creating a realistic occluded-crosswalk situation for the ego vehicle.
+A modular CARLA simulation framework designed to test and evaluate autonomous vehicle perception and control in challenging occlusion scenarios. This framework includes multiple scenarios testing different occlusion types:
+
+- **Scenario 1**: Static truck occlusion with pedestrian crossing
+- **Scenario 2**: Moving vehicle occlusion in adjacent lane
+- **Scenario 3**: Pedestrian crossing between multiple parked vehicles
 
 ---
 
@@ -15,14 +19,21 @@ Occlusion-Aware-Perception/
 ├── occl_simulator/
 │   ├── __main__.py             # Main entry point - runs scenarios
 │   ├── scenario1.py            # Scenario 1: Pedestrian crossing between two trucks
+│   ├── scenario2.py            # Scenario 2: Neighbouring-lane moving-vehicle occlusion
+│   ├── scenario3.py            # Scenario 3: Pedestrian crossing between multiple parked vehicles
 │   ├── config.py               # Scenario configuration loader
 │   ├── actors_static.py        # Static actors (trucks, props)
+│   ├── actors_moving.py        # Moving vehicle controller
 │   ├── actors_peds.py          # Pedestrian spawning and movement
 │   ├── camera.py               # Camera sensor and video recording
 │   └── capture_waypoints.py    # Tool to capture positions in CARLA
 ├── test_data/
 │   ├── scenario1_vehicles.json # Vehicle configuration for scenario 1
-│   └── scenario1_peds.json     # Pedestrian configuration for scenario 1
+│   ├── scenario1_peds.json     # Pedestrian configuration for scenario 1
+│   ├── scenario2_vehicles.json # Vehicle configuration for scenario 2
+│   ├── scenario2_peds.json     # Pedestrian configuration for scenario 2
+│   ├── scenario3_vehicles.json # Vehicle configuration for scenario 3
+│   └── scenario3_peds.json     # Pedestrian configuration for scenario 3
 ├── tests/
 │   └── __init__.py
 ├── requirements.txt
@@ -98,16 +109,59 @@ CARLA 0.9.15 connected at 127.0.0.1:2000.
 Inside same container after CARLA is running:
 ```
 cd ~/Occlusion-Aware-Perception
-PYTHONPATH=. python3 -m occl_simulator scenario1
-```
-This:
-- Connects to CARLA
-- Loads Town05
-- Spawns ego vehicle + trucks + pedestrian
-- Runs default controller
-- Records video
 
-Stop with Ctrl+C.
+# Run Scenario 1: Pedestrian crossing between static trucks
+PYTHONPATH=. python3 -m occl_simulator scenario1
+
+# Run Scenario 2: Neighbouring-lane moving-vehicle occlusion
+PYTHONPATH=. python3 -m occl_simulator scenario2
+
+# Run Scenario 3: Pedestrian crossing between multiple parked vehicles
+PYTHONPATH=. python3 -m occl_simulator scenario3
+```
+
+## Running with Occlusion-Aware Controller
+
+The framework includes an occlusion-aware controller that autonomously slows down or stops based on detected occlusion:
+
+```
+# Run Scenario 1 with occlusion-aware controller
+PYTHONPATH=. python3 -m occl_simulator scenario1 aware
+
+# Run Scenario 2 with occlusion-aware controller
+PYTHONPATH=. python3 -m occl_simulator scenario2 aware
+```
+
+### Controller Comparison
+
+| Controller | Command | Behavior |
+|------------|---------|----------|
+| `default`  | `python -m occl_simulator scenario1` | Baseline - drives at constant speed, no occlusion reaction |
+| `aware`    | `python -m occl_simulator scenario1 aware` | Occlusion-aware - slows/stops based on detected hazards |
+
+---
+
+# Scenario Descriptions
+
+## Scenario 1: Static Truck Occlusion
+- Two stationary trucks parked on the side of the road
+- Pedestrian crosses between the trucks
+- Ego vehicle approaches and must detect the occluded pedestrian
+- Tests: Static occlusion detection
+
+## Scenario 2: Neighbouring-Lane Moving-Vehicle Occlusion
+- Two trucks moving in the adjacent lane (slightly ahead of ego)
+- Pedestrian crosses in front of the trucks
+- Front truck brakes hard for pedestrian
+- Ego cannot see pedestrian (blocked by trucks) but should react to truck braking
+- Tests: Dynamic occlusion + social cue detection (adjacent vehicle braking)
+
+## Scenario 3: Pedestrian Crossing Between Multiple Parked Vehicles
+- Multiple parked vehicles (trucks, cars) creating occlusion zones on both sides of the road
+- Pedestrian crosses the street between the parked vehicles
+- Ego vehicle approaches at moderate speed (16 km/h)
+- Pedestrian is hidden by the parked firetruck and other vehicles until crossing
+- Tests: Complex multi-vehicle static occlusion + pedestrian detection
 
 ---
 
@@ -163,7 +217,48 @@ A scenario can optionally override this by returning an occluders list in its sc
 
 Actors are only used as occluders if they have a bounding_box attribute (typically vehicles, trucks, large static props, etc.).
 
-For most new scenarios you don’t need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., “only these two trucks should occlude, parked cars should not”) do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
+For most new scenarios you don't need to wire anything special: just spawn your vehicles, and the controller will automatically treat them as occluders. Only if you want fine–grained control (e.g., "only these two trucks should occlude, parked cars should not") do you need to pass an explicit occluders list from your scenario. In scenario1.py, that line is commented out. See immplementation for usage details.
+
+---
+
+# Occlusion-Aware Controller
+
+The `OcclusionAwareController` class implements autonomous driving decisions based on occlusion detection. It extends the baseline `VehicleController` with:
+
+## Key Features
+
+1. **Forward Occlusion Analysis**: Scans a ±45° cone ahead of the ego vehicle to detect occluded regions
+2. **Safe Speed Calculation**: Uses stopping distance formula: `v_safe = √(2 × a_max × d_occluded)`
+3. **Adjacent Vehicle Monitoring**: Detects when nearby vehicles brake hard (social cue)
+4. **Risk-Based Decision Making**: Combines multiple factors into a 0-1 risk level
+
+## Safety Logic
+
+| Risk Level | Action |
+|------------|--------|
+| < 0.4 | Normal driving at target speed |
+| 0.4 - 0.8 | Reduce speed to safe level based on occlusion distance |
+| > 0.8 | Emergency braking (also triggered by adjacent vehicle braking) |
+
+## Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `a_max_decel` | 4.0 m/s² | Maximum comfortable deceleration |
+| `min_safe_speed_kmh` | 5.0 km/h | Minimum creep speed when occluded |
+| `occlusion_danger_threshold` | 0.3 | Fraction of forward cells triggering caution |
+| `forward_scan_angle` | 45° | Half-angle of forward scanning cone |
+
+## How It Works
+
+1. **Every tick**: Compute occlusion grid using ray-casting
+2. **Analyze**: Count occluded cells in forward cone, find nearest occluded region
+3. **Monitor**: Check if adjacent vehicles are braking (speed drop > 0.3 m/s per frame)
+4. **Calculate**: Safe speed based on stopping distance to nearest occlusion
+5. **Apply**: Throttle/brake based on risk level
+
+This allows the ego vehicle to safely slow down when approaching areas where pedestrians or vehicles might be hidden, such as between parked trucks or in blind spots created by adjacent traffic.
+
 ---
 
 # Adding New Scenarios

@@ -9,3 +9,6 @@ opencv-python
 
 # Optional dependencies
 pygame  # For interactive waypoint capture tool
+
+ultralytics>=8.0.0   # YOLOv8
+torch>=2.0.0         # PyTorch backend

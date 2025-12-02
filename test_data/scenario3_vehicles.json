@@ -1,0 +1,38 @@
+{
+  "ego_vehicle": {
+    "location": { "x": 81.82, "y": 141.91, "z": 0.23 },
+    "rotation": { "pitch": 0.0, "yaw": 180.0, "roll": 0.0 },
+    "speed_kmh": 25,
+    "turn": {
+      "type": "left",
+      "trigger_x": 33,
+      "target_location": {
+        "x": 29.0,
+        "y": 150.0,
+        "z": 0.23
+      }
+    }
+  },
+  "trucks": [
+    {
+      "type": "vehicle.toyota.prius",
+      "location": { "x": 43, "y": 138.7, "z": 2.11 },
+      "rotation": { "pitch": 0.0, "yaw": 180.0, "roll": 0.0 }
+    },
+    {
+      "type": "vehicle.carlamotors.firetruck",
+      "location": { "x": 44.53, "y": 145.03, "z": 2.04 },
+      "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 }
+    },
+    {
+      "type": "vehicle.carlamotors.firetruck",
+      "location": { "x": 55.50, "y": 145.36, "z": 3.77 },
+      "rotation": { "pitch": 0.0, "yaw": 0.0, "roll": 0.0 }
+    },
+    {
+      "type": "vehicle.carlamotors.carlacola",
+      "location": { "x": 51.23, "y": 139, "z": 0.85 },
+      "rotation": { "pitch": 0.0, "yaw": 183.0, "roll": 0.0 }
+    }
+  ]
+}

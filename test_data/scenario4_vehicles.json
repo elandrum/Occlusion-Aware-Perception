@@ -1,0 +1,74 @@
+{
+  "ego_vehicle": {
+    "location": {
+      "x": -18.98,
+      "y": 3.21,
+      "z": 0.98
+    },
+    "rotation": {
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "roll": 0.0
+    },
+    "speed_kmh": 12,
+    "turn": {
+      "type": "left",
+      "trigger_x": 26.0,
+      "target_location": {
+        "x": 29.0,
+        "y": -14.0,
+        "z": 0.98
+      }
+    }
+  },
+  "moving_vehicles": [
+    {
+      "id": "truck_front",
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": -10.0,
+        "y": 2.8,
+        "z": 0.98
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      },
+      "speed_kmh": 10,
+      "behavior": "straight"
+    },
+    {
+      "id": "truck_adjacent",
+      "type": "vehicle.carlamotors.firetruck",
+      "location": {
+        "x": -10.0,
+        "y": 6.5,
+        "z": 0.98
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0
+      },
+      "speed_kmh": 11,
+      "behavior": "straight"
+    },
+    {
+      "id": "red_light_runner",
+      "type": "vehicle.audi.a2",
+      "location": {
+        "x": 55.0,
+        "y": -0.5,
+        "z": 0.98
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 180.0,
+        "roll": 0.0
+      },
+      "speed_kmh": 9,
+      "behavior": "straight"
+    }
+  ]
+}
