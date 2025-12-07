@@ -476,33 +476,19 @@ A key implementation challenge was synchronizing multiple sensor streams:
 
 **Problem**: RGB and depth cameras have separate callbacks that may arrive at slightly different times, while vehicle state updates come from a third source.
 
-**Solution**: We implemented a synchronized sensor manager that:
-1. Waits for both RGB and depth images before processing
-2. Timestamps all sensor data
-3. Uses the most recent complete sensor set for each control cycle
-4. Drops stale data older than 100ms
+**Solution**: We implemented a synchronized sensor manager that buffers incoming sensor data and ensures temporal alignment before processing. The manager maintains separate storage for RGB images, depth images, and their respective timestamps. When either sensor callback fires, the manager stores the new data along with the current system time.
 
-```python
-class SensorManager:
-    def __init__(self):
-        self.rgb_image = None
-        self.depth_image = None
-        self.rgb_timestamp = 0
-        self.depth_timestamp = 0
-    
-    def on_rgb(self, image):
-        self.rgb_image = image
-        self.rgb_timestamp = time.time()
-    
-    def on_depth(self, image):
-        self.depth_image = image
-        self.depth_timestamp = time.time()
-    
-    def get_synchronized(self):
-        if abs(self.rgb_timestamp - self.depth_timestamp) < 0.1:
-            return self.rgb_image, self.depth_image
-        return None, None
-```
+The synchronization logic operates as follows:
+
+1. **Buffer incoming data**: Each sensor callback stores its image data and records a timestamp indicating when the data arrived.
+
+2. **Check temporal alignment**: When the control loop requests sensor data, the manager compares the RGB and depth timestamps. If the timestamps differ by less than 100 milliseconds, the data is considered synchronized and returned as a matched pair.
+
+3. **Reject stale data**: If the timestamps differ by more than 100 milliseconds, the manager returns null values, signaling to the control loop that it should skip this frame rather than process misaligned data.
+
+4. **Continuous update**: Both sensor streams update independently, and the manager always provides the most recent synchronized pair available.
+
+This approach ensures that the perception pipeline never processes an RGB image paired with depth data from a different moment in time, which could cause objects to appear at incorrect distances or positions.
 
 #### 5.2.2 Coordinate Frame Transformations
 
@@ -516,26 +502,19 @@ Multiple coordinate frames required careful management:
 
 **Grid Frame**: Origin at grid corner, indices [i,j] corresponding to spatial positions
 
-We implemented transformation utilities:
+We implemented transformation utilities to convert between these coordinate frames, which are essential for placing detected objects on the occlusion grid and interpreting grid-based risk in terms of real-world distances.
 
-```python
-def world_to_ego(world_point, ego_transform):
-    """Transform world coordinates to ego vehicle frame."""
-    # Translate to ego origin
-    relative = world_point - ego_transform.location
-    # Rotate by inverse of ego heading
-    heading = -math.radians(ego_transform.rotation.yaw)
-    x = relative.x * cos(heading) - relative.y * sin(heading)
-    y = relative.x * sin(heading) + relative.y * cos(heading)
-    return (x, y)
+**World-to-Ego Transformation**
 
-def ego_to_grid(ego_point, grid_size=60, cell_size=0.5):
-    """Convert ego-frame position to grid indices."""
-    max_range = (grid_size * cell_size) / 2
-    i = int((max_range - ego_point[1]) / cell_size)  # Y maps to row
-    j = int((ego_point[0] + max_range) / cell_size)   # X maps to column
-    return (i, j)
-```
+Converting from world coordinates to the ego vehicle frame requires two steps. First, we translate the world point by subtracting the ego vehicle's world position, yielding a vector from the vehicle to the point. Second, we rotate this vector by the negative of the vehicle's heading angle (yaw) to align the result with the ego frame where X points forward and Y points left. The rotation uses standard 2D rotation matrix operations with sine and cosine of the heading angle.
+
+**Ego-to-Grid Transformation**
+
+Converting from the ego frame to grid indices maps continuous spatial coordinates to discrete cell positions. Given the grid's total extent (30 meters in each direction from the vehicle, divided into 0.5-meter cells), we calculate the grid indices as follows:
+- The row index corresponds to the Y-coordinate (lateral position), with the mapping inverted so that positive Y (left of vehicle) maps to lower row indices
+- The column index corresponds to the X-coordinate (forward position), offset by half the grid extent so that the vehicle sits at the grid center
+
+Both transformations use simple arithmetic operations and execute in constant time, adding negligible overhead to the perception loop.
 
 #### 5.2.3 Real-Time Performance Optimization
 
