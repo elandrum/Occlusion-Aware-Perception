@@ -1,0 +1,38 @@
+{
+  "description": "S2: Social Cue with Moving Trucks - Occlusion-Aware Controller",
+  "scenario": "Moving firetrucks brake for pedestrian, ego follows",
+  "controller": "aware",
+  "source": "CARLA scenario2 - actual configuration",
+  "scenario_config": {
+    "duration": 25.0,
+    "dt": 0.05,
+    "v_target": 6.67,
+    "initial_speed": 6.67,
+    "ego_start_x": -30.98,
+    "ped_x": 5.0,
+    "notes": "24 km/h = 6.67 m/s, aware controller responds to both occlusion and social cue"
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 2.0,
+      "duration": 8.0,
+      "risk": 0.70,
+      "description": "Moving firetrucks create occlusion - aware slows proactively"
+    },
+    {
+      "type": "social_cue",
+      "time": 5.0,
+      "duration": 3.0,
+      "description": "truck_front brakes - aware controller responds immediately"
+    },
+    {
+      "type": "pedestrian_crossing",
+      "time": 6.0,
+      "duration": 12.0,
+      "initial_distance": 35.0,
+      "ped_speed": 1.4,
+      "description": "Pedestrian revealed - ego already at reduced speed"
+    }
+  ]
+}

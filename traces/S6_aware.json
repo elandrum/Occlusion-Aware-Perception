@@ -1,0 +1,34 @@
+{
+  "description": "S6: False Social Cue - Occlusion-Aware Controller",
+  "scenario": "Adjacent vehicle brakes for unrelated reason, testing false positive handling",
+  "controller": "aware",
+  "scenario_config": {
+    "duration": 25.0,
+    "dt": 0.05,
+    "v_target": 7.2,
+    "initial_speed": 7.2
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 4.0,
+      "duration": 14.0,
+      "risk": 0.55,
+      "description": "Moderate occlusion - aware controller reduces speed appropriately"
+    },
+    {
+      "type": "social_cue",
+      "time": 6.0,
+      "duration": 2.5,
+      "description": "Adjacent brakes - aware controller responds but not overreacts"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 20.0,
+      "duration": 5.0,
+      "initial_distance": 25.0,
+      "ped_speed": 1.5,
+      "description": "Pedestrian far away - no emergency needed"
+    }
+  ]
+}

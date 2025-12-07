@@ -1,0 +1,36 @@
+{
+  "description": "S5: Two-Stage Pedestrian Emergence - Baseline Controller",
+  "scenario": "First pedestrian on sidewalk distracts, second pedestrian enters roadway",
+  "controller": "baseline",
+  "scenario_config": {
+    "duration": 30.0,
+    "dt": 0.05,
+    "v_target": 7.2,
+    "initial_speed": 7.2
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 2.0,
+      "duration": 18.0,
+      "risk": 0.65,
+      "description": "Street furniture and parked vehicles create occlusion"
+    },
+    {
+      "type": "pedestrian_crossing",
+      "time": 8.0,
+      "duration": 4.0,
+      "initial_distance": 12.0,
+      "ped_speed": 1.5,
+      "description": "First pedestrian visible on sidewalk - not entering road"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 15.0,
+      "duration": 10.0,
+      "initial_distance": 6.0,
+      "ped_speed": 1.8,
+      "description": "Second pedestrian suddenly enters roadway - very close"
+    }
+  ]
+}

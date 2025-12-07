@@ -1,0 +1,32 @@
+{
+  "description": "S3: Left Turn with Pedestrian - Occlusion-Aware Controller",
+  "scenario": "Left turn at intersection with pedestrian crossing",
+  "controller": "aware",
+  "source": "CARLA scenario3 - actual configuration",
+  "scenario_config": {
+    "duration": 25.0,
+    "dt": 0.05,
+    "v_target": 6.94,
+    "initial_speed": 6.94,
+    "ego_start_x": 81.82,
+    "ped_x": 38.54,
+    "notes": "25 km/h = 6.94 m/s, aware controller anticipates during turn"
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 3.0,
+      "duration": 10.0,
+      "risk": 0.65,
+      "description": "Complex occlusion during turn - aware controller slows"
+    },
+    {
+      "type": "pedestrian_crossing",
+      "time": 5.0,
+      "duration": 18.0,
+      "initial_distance": 43.0,
+      "ped_speed": 0.9,
+      "description": "Pedestrian detected earlier due to reduced approach speed"
+    }
+  ]
+}

@@ -399,7 +399,188 @@ Output: Target speed
 
 **Innovation**: The interpolation between comfortable and emergency deceleration based on risk level is novel. It reflects the intuition that in high-risk situations, we should assume we might need to brake hard.
 
-### 4.6 What's New in Our Approach
+### 4.6 STL-Based Controller Logic
+
+Rather than treating STL specifications purely as post-hoc verification, we embed the temporal logic requirements directly into the controller's decision-making process. This ensures the controller is designed from the ground up to satisfy the safety specifications.
+
+#### 4.6.1 STL Specifications Embedded in Controller
+
+We define six core STL specifications that the controller enforces in real-time:
+
+**Signal Definitions**:
+
+| Signal | Description | Unit |
+|--------|-------------|------|
+| `d_ped(t)` | Distance to nearest pedestrian | meters |
+| `v(t)` | Ego vehicle speed | m/s |
+| `r_occ(t)` | Occlusion risk level | [0,1] |
+| `a(t)` | Ego acceleration | m/s² |
+| `adj_brake(t)` | Adjacent vehicle braking hard | boolean |
+| `ped_in_path(t)` | Pedestrian detected in ego's path | boolean |
+| `Δposition(t)` | Position change over time window | meters |
+
+**φ₁: Collision Avoidance (Hard Safety)**
+```
+φ₁ = G(d_ped ≥ 0.5)
+```
+*"Always maintain at least 0.5m distance from any pedestrian."*
+
+This is the **hard safety constraint**. Any ρ < 0 means the vehicle came dangerously close to a pedestrian.
+
+**φ₂: Occlusion Response (Core Novelty)** ⭐
+```
+φ₂ = G(r_occ ≥ 0.5 → F[0,2](v ≤ 0.5 × v_target))
+```
+*"Whenever occlusion risk exceeds 50%, reduce speed to half target within 2 seconds."*
+
+This is **THE KEY DIFFERENTIATOR** between controllers:
+- Baseline controller: High occlusion? Doesn't care, keeps driving fast → **VIOLATES φ₂**
+- Aware controller: High occlusion? Slows to half speed within 2 seconds → **SATISFIES φ₂**
+
+**φ₃: Social Cue Response**
+```
+φ₃ = G(adj_brake → F[0,1](a < 0))
+```
+*"If an adjacent vehicle brakes hard, ego should start braking within 1 second."*
+
+Captures the human intuition that when nearby cars brake suddenly, something is happening that warrants caution.
+
+**φ₄: Emergency Stop Capability**
+```
+φ₄ = G(ped_in_path ∧ d_ped ≤ 15 → F[0,3](v ≤ 0.5))
+```
+*"If a pedestrian is detected in path within 15m, come to a near-stop within 3 seconds."*
+
+Validates the controller's ability to perform emergency stops when needed.
+
+**φ₅: Comfort Constraint**
+```
+φ₅ = G(¬emergency → a ≥ -3)
+```
+*"Deceleration should stay comfortable (≥ -3 m/s²) except in emergencies."*
+
+Smooth driving indicates proactive safety; constant harsh braking indicates reactive/panic behavior.
+
+**φ₆: Liveness (Progress)**
+```
+φ₆ = G(F[0,60](Δposition > 10))
+```
+*"The vehicle should make at least 10 meters progress every 60 seconds."*
+
+Without liveness, a controller could "cheat" by stopping forever—trivially safe but useless. This ensures the controller is **useful**, not just safe.
+
+**Complete Controller Specification**:
+```
+φ_controller = φ₁ ∧ φ₂ ∧ φ₃ ∧ φ₄ ∧ φ₅ ∧ φ₆
+```
+
+#### 4.6.2 Specification-Driven Control Architecture
+
+The controller continuously monitors signals and enforces these STL constraints in real-time:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 STL-Embedded Controller Logic                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   INPUTS (sampled at 20 Hz):                                     │
+│   ├── d_ped: distance to nearest pedestrian                     │
+│   ├── v: current ego velocity                                   │
+│   ├── r_occ: occlusion risk level                               │
+│   ├── adj_brake: adjacent vehicle braking signal                │
+│   └── ped_in_path: pedestrian in path flag                      │
+│                                                                  │
+│   STL CONSTRAINT CHECKS:                                         │
+│   ├── φ₁: if d_ped < 2.0m → EMERGENCY_STOP                      │
+│   ├── φ₂: if r_occ ≥ 0.5 → v_target ≤ 0.5 × v_max              │
+│   ├── φ₃: if adj_brake → begin braking within 1s               │
+│   ├── φ₄: if ped_in_path ∧ d_ped ≤ 15m → stop within 3s        │
+│   ├── φ₅: if ¬emergency → a ≥ -3 m/s²                          │
+│   └── φ₆: ensure Δposition > 10m per 60s                       │
+│                                                                  │
+│   OUTPUT: v_target that satisfies ALL active constraints        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 4.6.3 Constraint Priority Resolution
+
+When multiple constraints conflict, we resolve using the priority hierarchy:
+
+```
+Algorithm: STL Constraint Resolution
+
+Input: All constraint outputs (v_φ₁, v_φ₂, v_φ₃, v_φ₄, v_φ₅, v_φ₆)
+Output: Final v_target
+
+1. # Safety constraints (hard limits)
+   v_safe = min(v_φ₁, v_φ₄)  # Collision and emergency stop
+   
+2. # Proactive constraints
+   v_proactive = min(v_φ₂, v_φ₃)  # Occlusion and social cue
+   
+3. # Apply comfort constraint to deceleration
+   a_limited = apply_φ₅(a_required)
+   
+4. # Ensure liveness (minimum progress)
+   v_final = max(min(v_safe, v_proactive), v_φ₆)
+   
+5. # Safety always wins over liveness
+   If emergency_active:
+      v_final = v_safe  # Override liveness
+      
+6. Return v_final
+```
+
+#### 4.6.4 Temporal State Tracking
+
+The controller maintains internal state to track temporal constraints required by STL specifications. For each time-bounded specification, the controller records when the triggering condition first became true, allowing it to enforce response deadlines:
+
+- **Occlusion Response (φ₂)**: When occlusion risk first exceeds 0.5, the controller records the trigger time and enforces a 2-second deadline for speed reduction to half the target value.
+
+- **Social Cue Response (φ₃)**: When an adjacent vehicle's hard braking is detected, the controller starts a 1-second timer within which braking must be initiated.
+
+- **Emergency Stop (φ₄)**: When a pedestrian is detected in the path within 15 meters, the controller enforces a 3-second deadline to reach near-zero speed.
+
+- **Liveness (φ₆)**: The controller maintains a sliding window of position history (last 60 seconds at 20 Hz = 1200 samples) to compute cumulative progress and ensure the vehicle makes at least 10 meters of forward movement per minute.
+
+When the triggering condition clears (e.g., occlusion risk drops below threshold), the corresponding timer is reset, ready for the next activation.
+
+#### 4.6.5 Real-Time Robustness Monitoring
+
+The controller computes robustness values online to track safety margins:
+
+```
+Algorithm: Online Robustness Computation
+
+For each control cycle:
+
+1. φ₁ robustness: ρ₁ = d_ped - 0.5
+   # Positive = safe margin, Negative = too close
+   
+2. φ₂ robustness: 
+   If r_occ ≥ 0.5:
+      time_elapsed = current_time - occlusion_trigger_time
+      If time_elapsed ≤ 2.0:
+         ρ₂ = (0.5 × v_target) - v_current  # Positive when slow enough
+      Else:
+         ρ₂ = -1.0  # Deadline missed
+   Else:
+      ρ₂ = 1.0  # Constraint not active
+      
+3. φ₅ robustness: ρ₅ = a_current - (-3.0)
+   # Positive = comfortable, Negative = harsh braking
+   
+4. φ₆ robustness: ρ₆ = Δposition - 10.0
+   # Positive = making progress, Negative = stuck
+
+5. Log all ρ values for post-run analysis
+6. Trigger warning if any ρ approaches zero
+```
+
+This embedded STL approach ensures the controller **by construction** satisfies the specifications, rather than hoping they are satisfied and checking afterward.
+
+### 4.7 What's New in Our Approach
 
 Our system introduces several innovations compared to prior work:
 
@@ -415,62 +596,206 @@ Our system introduces several innovations compared to prior work:
 
 6. **Temporal Risk Memory**: The 20-frame maximum memory ensures that briefly-visible hazards are not immediately forgotten.
 
+7. **STL-Embedded Control**: The controller directly implements STL specifications as runtime constraints, ensuring safety properties are satisfied by construction.
+
+### 4.8 Formal Verification with Signal Temporal Logic (STL)
+
+Beyond embedding STL constraints in the controller, we also use STL for formal verification and robustness analysis. This provides rigorous, quantitative validation that the controller satisfies safety properties across all test scenarios.
+
+#### 4.8.1 Why STL for Autonomous Vehicles?
+
+| Challenge | How STL Helps |
+|-----------|---------------|
+| Complex timing requirements | Temporal operators with time bounds |
+| Continuous signals (speed, distance) | Works directly with real-valued signals |
+| Need quantitative safety margins | Robustness semantics (not just pass/fail) |
+| Finding edge cases | Enables automated falsification |
+
+#### 4.8.2 STL Syntax and Semantics
+
+STL formulas are built from **atomic predicates** and **temporal operators**:
+
+**Atomic Predicates** compare signals to thresholds:
+- `v ≤ 5` — speed is at most 5 m/s
+- `d_ped > 10` — distance to pedestrian is greater than 10 m
+- `r_occ ≥ 0.5` — occlusion risk level is at least 50%
+
+**Temporal Operators**:
+
+| Operator | Symbol | Meaning |
+|----------|--------|---------|
+| **Globally** | G[a,b] | Must hold for ALL time in [a,b] |
+| **Eventually** | F[a,b] | Must hold at SOME time in [a,b] |
+| **Until** | U[a,b] | φ₁ holds until φ₂ becomes true |
+
+**Reading STL Formulas**:
+- `G[0,10](v ≤ 5)` — "Speed stays ≤ 5 m/s for the next 10 seconds"
+- `F[0,3](v ≤ 0.5)` — "Speed drops to near-zero within 3 seconds"
+- `G(danger → F[0,2](brake))` — "Whenever danger occurs, brake within 2 seconds"
+
+#### 4.8.3 Robustness Semantics
+
+Unlike boolean logic (true/false), STL computes **robustness** (ρ) — a real number indicating *how strongly* a specification is satisfied or violated:
+
+| Robustness Value | Interpretation |
+|------------------|----------------|
+| **ρ > 0** | Specification SATISFIED with margin |
+| **ρ = 0** | Boundary case (just barely satisfied) |
+| **ρ < 0** | Specification VIOLATED |
+
+**Robustness Computation Rules**:
+
+| Formula | Robustness Computation |
+|---------|------------------------|
+| `x ≤ c` | ρ = c - x (positive if satisfied) |
+| `x ≥ c` | ρ = x - c (positive if satisfied) |
+| `φ₁ ∧ φ₂` | ρ = min(ρ₁, ρ₂) — weakest link |
+| `φ₁ ∨ φ₂` | ρ = max(ρ₁, ρ₂) — strongest link |
+| `G[a,b](φ)` | ρ = min over [a,b] — worst moment |
+| `F[a,b](φ)` | ρ = max over [a,b] — best moment |
+
+**Example**: For specification `G[0,5](v ≤ 10)` with trace where speed reaches 11 m/s at t=2:
+- At each time t: ρ(t) = 10 - v(t)
+- G (Globally) takes the minimum: ρ = min(+2, +1, -1, +1, +3, +4) = **-1**
+- Result: Specification **VIOLATED** — the vehicle exceeded 10 m/s by 1 m/s
+
+Robustness tells us **how close** we are to the boundary—essential for understanding safety margins and comparing controllers.
+
+#### 4.8.4 Specification Priority Hierarchy
+
+The six STL specifications defined in Section 4.6.1 (φ₁ through φ₆) are prioritized as follows:
+
+```
+HIGHEST PRIORITY (Safety)
+      │
+      ▼
+  ┌───────────┐
+  │    φ₁    │  ← Collision avoidance (hard constraint)
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │    φ₄    │  ← Emergency stop capability
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │    φ₂    │  ← Occlusion response (proactive safety)
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │    φ₃    │  ← Social cue response
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │    φ₅    │  ← Comfort (soft constraint)
+  └─────┬─────┘
+        ▼
+  ┌───────────┐
+  │    φ₆    │  ← Liveness (progress)
+  └───────────┘
+
+LOWEST PRIORITY (Performance)
+```
+
+#### 4.8.5 STL Verification Pipeline
+
+The verification process follows a systematic pipeline:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  STL Verification Pipeline                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   ┌───────────┐    ┌───────────┐    ┌───────────────────┐   │
+│   │  CARLA    │───▶│  Signal   │───▶│  STL Monitor      │   │
+│   │ Simulation│    │   Log     │    │  (RTAMT library)  │   │
+│   └───────────┘    └───────────┘    └─────────┬─────────┘   │
+│                                               │              │
+│                                               ▼              │
+│                                        ┌─────────────┐       │
+│                                        │ Robustness  │       │
+│                                        │  ρ > 0 PASS │       │
+│                                        │  ρ < 0 FAIL │       │
+│                                        └─────────────┘       │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Signal Logging**: During each simulation run, we log signals at 20 Hz:
+
+| Signal | Variable | Unit | Description |
+|--------|----------|------|-------------|
+| Time | `time` | seconds | Simulation timestamp |
+| Ego Speed | `v` | m/s | Current vehicle velocity |
+| Pedestrian Distance | `d_ped` | meters | Distance to nearest pedestrian |
+| Occlusion Risk | `r_occ` | [0,1] | Computed occlusion risk level |
+| Acceleration | `a` | m/s² | Current acceleration |
+| Adjacent Braking | `adj_brake` | boolean | Adjacent vehicle braking hard |
+| Pedestrian in Path | `ped_in_path` | boolean | Pedestrian detected in path |
+| Position Delta | `delta_pos` | meters | Position change over window |
+
+**RTAMT Integration**: We use the RTAMT (Real-Time Assurance Monitoring Tool) library for efficient online monitoring of STL formulas with quantitative robustness semantics.
+
+#### 4.8.6 Falsification Approach
+
+Beyond passive monitoring, STL enables **falsification**—systematically searching for inputs that cause specification violations:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Falsification Loop                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   ┌─────────────────┐                                        │
+│   │ Sample scenario │  (ped_time, ped_speed, ego_speed...)   │
+│   │   parameters    │                                        │
+│   └────────┬────────┘                                        │
+│            │                                                 │
+│            ▼                                                 │
+│   ┌─────────────────┐                                        │
+│   │  Run simulation │                                        │
+│   └────────┬────────┘                                        │
+│            │                                                 │
+│            ▼                                                 │
+│   ┌─────────────────┐     ┌────────────────────┐             │
+│   │  Evaluate STL   │────▶│ ρ < 0? → VIOLATION │             │
+│   │  (compute ρ)    │     │ ρ ≥ 0? → try again │             │
+│   └─────────────────┘     └────────────────────┘             │
+│                                                              │
+│   Goal: Minimize ρ (find worst-case scenarios)               │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Search Space Parameters**:
+
+| Parameter | Range | Description |
+|-----------|-------|-------------|
+| `ped_start_time` | 0-10s | When pedestrian starts crossing |
+| `ped_speed` | 0.5-3.0 m/s | Pedestrian walking speed |
+| `ped_offset` | -3 to +3m | Lateral start position |
+| `ego_start_speed` | 20-50 km/h | Initial ego vehicle speed |
+| `occlusion_offset` | -2 to +2m | Position of occluding object |
+
+#### 4.8.7 Expected Controller Comparison
+
+| Specification | Baseline | Occlusion-Aware |
+|---------------|----------|-----------------|
+| φ₁ (Collision) | May Violate | Satisfies |
+| φ₂ (Occlusion) | **VIOLATES** | **Satisfies** |
+| φ₃ (Social Cue) | Violates (ignored) | Satisfies |
+| φ₄ (Emergency Stop) | Marginal | Satisfies |
+| φ₅ (Comfort) | **VIOLATES** (harsh braking) | Satisfies |
+| φ₆ (Liveness) | Satisfies | Satisfies |
+| **Overall** | **FAILS** | **PASSES** |
+
+The key differentiator is **φ₂ (Occlusion Response)**: the baseline has no occlusion awareness and drives at full speed through blind spots, while the aware controller proactively reduces speed when visibility is limited.
+
 ---
 
 ## 5. Implementation
 
-### 5.1 Software Framework
+### 5.1 Integration Details
 
-#### 5.1.1 Simulation Environment
-
-**CARLA Simulator (Version 0.9.15)**
-
-CARLA is an open-source simulator for autonomous driving research built on Unreal Engine. It provides:
-
-- High-fidelity 3D urban environments with realistic rendering
-- Accurate vehicle dynamics and physics simulation
-- Configurable sensors including RGB cameras, depth cameras, LiDAR, and semantic segmentation
-- Traffic manager for controlling NPC vehicles and pedestrians
-- Python API for scenario scripting and vehicle control
-- Town05 map used for our scenarios (urban environment with parked vehicles)
-
-The simulation runs at 20 Hz synchronous mode, ensuring deterministic behavior for repeatable experiments.
-
-#### 5.1.2 Perception Stack
-
-**YOLOv8 (Ultralytics)**
-
-- Model: yolov8n.pt (nano version for real-time inference)
-- Input: 960×540 RGB images
-- Output: Bounding boxes, class labels, confidence scores
-- Classes of interest: person, car, truck, bus, motorcycle
-- Inference: ~15ms per frame on NVIDIA GPU
-
-**Depth Processing**
-
-- CARLA depth camera provides per-pixel distance in meters
-- Depth lookup at detection bounding box centers
-- Median filtering over 5×5 region for robustness
-- Pinhole camera model for 3D projection
-
-#### 5.1.3 Control Stack
-
-**Vehicle Control Interface**
-
-- CARLA vehicle control accepts throttle [0,1], brake [0,1], steer [-1,1]
-- Proportional speed control for smooth transitions
-- Maximum throttle: 0.8 (for controlled acceleration)
-- Maximum brake: 0.9 (reserving margin for emergency)
-
-**PID Controller**
-
-- Proportional gain: 0.5
-- No integral or derivative terms (proportional sufficient for speed control)
-- Deadband of ±0.5 m/s around target speed
-
-### 5.2 Integration Details
-
-#### 5.2.1 Sensor Synchronization
+#### 5.1.1 Sensor Synchronization
 
 A key implementation challenge was synchronizing multiple sensor streams:
 
@@ -490,7 +815,7 @@ The synchronization logic operates as follows:
 
 This approach ensures that the perception pipeline never processes an RGB image paired with depth data from a different moment in time, which could cause objects to appear at incorrect distances or positions.
 
-#### 5.2.2 Coordinate Frame Transformations
+#### 5.1.2 Coordinate Frame Transformations
 
 Multiple coordinate frames required careful management:
 
@@ -516,7 +841,7 @@ Converting from the ego frame to grid indices maps continuous spatial coordinate
 
 Both transformations use simple arithmetic operations and execute in constant time, adding negligible overhead to the perception loop.
 
-#### 5.2.3 Real-Time Performance Optimization
+#### 5.1.3 Real-Time Performance Optimization
 
 Achieving real-time performance was a critical requirement for the system. The control loop must complete within 50 milliseconds (20 Hz) to maintain responsive vehicle control—any slower and the vehicle's reactions would lag dangerously behind environmental changes. Several careful optimizations were necessary across all system components to meet this timing budget.
 
@@ -569,7 +894,7 @@ Through extensive profiling, we characterized the typical frame timing breakdown
 
 The total frame time of approximately 33 milliseconds is well under our 50 millisecond budget, providing a comfortable margin for occasional spikes due to system load or complex scenes. This headroom is important for robust real-world operation where timing must be reliable, not just average-case acceptable.
 
-#### 5.2.4 Visualization System
+#### 5.1.4 Visualization System
 
 Effective visualization proved essential for both system development and demonstration. During development, visualization allowed us to verify that each component was functioning correctly—seeing the occlusion grid update in real-time made it immediately obvious when ray-casting was misconfigured or when vehicle bounding boxes were incorrectly positioned. For demonstration purposes, visualization communicates the system's reasoning to observers who would otherwise see only the vehicle's external behavior without understanding why it makes particular decisions.
 

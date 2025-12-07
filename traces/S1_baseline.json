@@ -1,0 +1,32 @@
+{
+  "description": "S1: Pedestrian Crossing Between Two Trucks - Baseline Controller",
+  "scenario": "Pedestrian crosses street between two parked firetrucks",
+  "controller": "baseline",
+  "source": "CARLA scenario1 - actual configuration",
+  "scenario_config": {
+    "duration": 20.0,
+    "dt": 0.05,
+    "v_target": 7.22,
+    "initial_speed": 7.22,
+    "ego_start_x": -25.98,
+    "ped_x": -3.8,
+    "notes": "26 km/h = 7.22 m/s, ego ~22m from ped position"
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 1.5,
+      "duration": 5.0,
+      "risk": 0.75,
+      "description": "Two firetrucks at x=2.32 and x=-8.51 create occlusion zone"
+    },
+    {
+      "type": "pedestrian_crossing",
+      "time": 3.0,
+      "duration": 15.0,
+      "initial_distance": 22.0,
+      "ped_speed": 1.0,
+      "description": "Pedestrian at y=10.54 walks to y=-5.0 at 1.0 m/s"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "description": "S8: High-Speed Shadowing Truck - Occlusion-Aware Controller",
+  "scenario": "Following truck at higher speed, truck suddenly brakes revealing pedestrian",
+  "controller": "aware",
+  "scenario_config": {
+    "duration": 30.0,
+    "dt": 0.05,
+    "v_target": 11.11,
+    "initial_speed": 11.11
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 0.0,
+      "duration": 25.0,
+      "risk": 0.85,
+      "description": "Lead truck occlusion detected - aware controller maintains lower speed"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 18.0,
+      "duration": 8.0,
+      "initial_distance": 12.0,
+      "ped_speed": 1.5,
+      "description": "Pedestrian revealed - ego already at safe following speed"
+    }
+  ]
+}

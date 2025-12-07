@@ -1,0 +1,34 @@
+{
+  "description": "S6: False Social Cue - Baseline Controller",
+  "scenario": "Adjacent vehicle brakes for unrelated reason (dropped item), no pedestrian threat",
+  "controller": "baseline",
+  "scenario_config": {
+    "duration": 25.0,
+    "dt": 0.05,
+    "v_target": 7.2,
+    "initial_speed": 7.2
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 4.0,
+      "duration": 14.0,
+      "risk": 0.55,
+      "description": "Moderate occlusion from parked vehicles"
+    },
+    {
+      "type": "social_cue",
+      "time": 6.0,
+      "duration": 2.5,
+      "description": "Adjacent vehicle brakes suddenly - but for unrelated reason"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 20.0,
+      "duration": 5.0,
+      "initial_distance": 25.0,
+      "ped_speed": 1.5,
+      "description": "Pedestrian appears late, far away - not a threat"
+    }
+  ]
+}

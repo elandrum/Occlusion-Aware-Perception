@@ -1,0 +1,28 @@
+{
+  "description": "S7: Oncoming Vehicle Narrow Gap - Baseline Controller",
+  "scenario": "Narrow street with oncoming vehicle, pedestrian steps out from gap",
+  "controller": "baseline",
+  "scenario_config": {
+    "duration": 25.0,
+    "dt": 0.05,
+    "v_target": 5.56,
+    "initial_speed": 5.56
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 5.0,
+      "duration": 7.0,
+      "risk": 0.75,
+      "description": "Oncoming vehicle creates moving occlusion zone"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 10.0,
+      "duration": 8.0,
+      "initial_distance": 10.0,
+      "ped_speed": 1.5,
+      "description": "Pedestrian steps out from gap between vehicles"
+    }
+  ]
+}

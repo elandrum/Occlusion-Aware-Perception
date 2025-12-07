@@ -1,0 +1,31 @@
+{
+  "description": "S4: Left Turn with Moving Traffic and Red Light Runner - Baseline Controller",
+  "scenario": "Left turn with moving trucks, oncoming red-light runner",
+  "controller": "baseline",
+  "source": "CARLA scenario4 - actual configuration",
+  "scenario_config": {
+    "duration": 30.0,
+    "dt": 0.05,
+    "v_target": 3.33,
+    "initial_speed": 3.33,
+    "ego_start_x": -18.98,
+    "notes": "12 km/h = 3.33 m/s, left turn at x=26, red_light_runner from x=55"
+  },
+  "events": [
+    {
+      "type": "occlusion",
+      "time": 1.0,
+      "duration": 12.0,
+      "risk": 0.80,
+      "description": "Two moving firetrucks (truck_front at 10km/h, truck_adjacent at 11km/h) create dynamic occlusion"
+    },
+    {
+      "type": "pedestrian_reveal",
+      "time": 8.0,
+      "duration": 15.0,
+      "initial_distance": 40.0,
+      "ped_speed": 2.5,
+      "description": "red_light_runner Audi A2 at 9km/h (~2.5m/s) from x=55 traveling opposite direction"
+    }
+  ]
+}
