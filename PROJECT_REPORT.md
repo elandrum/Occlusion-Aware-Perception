@@ -1002,18 +1002,6 @@ Speed (m/s):       7.2    6.8 ▼  4.2 ▼  3.1    3.0    2.8    1.5    0.0
 
 4. **Social Awareness**: In Scenario 2, the aware controller responds to adjacent vehicle braking even before occlusion analysis would trigger.
 
-#### False Positive Handling
-
-Analysis of 100 "false positive" occlusion events (occlusion detected, no hazard present):
-
-| Response | Frequency | Impact |
-|----------|-----------|--------|
-| Minor slowdown (10-20% speed reduction) | 78% | Negligible delay |
-| Moderate slowdown (20-40% reduction) | 19% | 2-5 second delay |
-| Near-stop (>50% reduction) | 3% | 5-10 second delay |
-
-**Conclusion**: False positives result in minor delays but never dangerous behavior. This asymmetry is acceptable—false negatives would be catastrophic.
-
 #### Failure Mode Analysis
 
 | Failure Mode | Cause | Frequency | Mitigation |
