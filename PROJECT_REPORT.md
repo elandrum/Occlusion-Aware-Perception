@@ -1017,6 +1017,8 @@ Speed (m/s):       7.2    6.8 ▼  4.2 ▼  3.1    3.0    2.8    1.5    0.0
 
 **Scenario 1: Static Truck Occlusion**
 
+This scenario tests core φ₂ behavior: proactive speed reduction when approaching a known occlusion source with pedestrian likely to emerge.
+
 | Specification | Baseline ρ | Aware ρ | Result |
 |---------------|------------|---------|--------|
 | φ₁ (Collision) | +2.3 | +5.1 | Both Pass |
@@ -1030,6 +1032,8 @@ Speed (m/s):       7.2    6.8 ▼  4.2 ▼  3.1    3.0    2.8    1.5    0.0
 
 **Scenario 2: Moving Vehicle Occlusion**
 
+This scenario tests dynamic occlusion tracking combined with social cue integration (φ₂ + φ₃): the adjacent vehicle's braking provides early warning of the hidden pedestrian.
+
 | Specification | Baseline ρ | Aware ρ | Result |
 |---------------|------------|---------|--------|
 | φ₁ (Collision) | +2.9 | +6.3 | Both Pass |
@@ -1041,7 +1045,9 @@ Speed (m/s):       7.2    6.8 ▼  4.2 ▼  3.1    3.0    2.8    1.5    0.0
 
 **Interpretation:** The baseline failed φ₃ (ignored adjacent vehicle braking) in addition to occlusion and comfort violations. The aware controller's social cue detection provided early warning.
 
-**Scenario 4: Late Reveal**
+**Scenario 4: Late Reveal – Departing Truck**
+
+This scenario specifically tests the φ₂ → φ₄ transition: from occlusion-based caution to pedestrian-based emergency stop.
 
 | Specification | Baseline ρ | Aware ρ | Result |
 |---------------|------------|---------|--------|
@@ -1054,6 +1060,8 @@ Speed (m/s):       7.2    6.8 ▼  4.2 ▼  3.1    3.0    2.8    1.5    0.0
 **Interpretation:** The baseline had no pre-reduction from occlusion (φ₂ = -3.2), so when the pedestrian was revealed mid-crossing, it required emergency braking that nearly violated φ₁. The aware controller's proactive slowdown enabled smooth transition to pedestrian stop.
 
 **Scenario 5: Two-Stage Emergence**
+
+This scenario tests temporal robustness of φ₂ over extended horizons—does the controller maintain occlusion caution after resolving the first hazard?
 
 | Specification | Baseline ρ | Aware ρ | Result |
 |---------------|------------|---------|--------|
