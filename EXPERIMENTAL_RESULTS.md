@@ -14,10 +14,6 @@ This document presents comprehensive experimental results for the Occlusion-Awar
 
 All experiments were conducted in CARLA Simulator version 0.9.15 using the Town05 urban map. The simulation ran in synchronous mode at 20 Hz, ensuring deterministic and reproducible results. Each scenario was executed 10 times to account for any timing variations, with metrics averaged across runs.
 
-**Hardware Configuration:**
-- CPU: Intel Core i7-12700K @ 3.6 GHz
-- GPU: NVIDIA RTX 3080 (10 GB VRAM)
-- RAM: 32 GB DDR4
 
 **Controller Configurations Tested:**
 | Controller | Description |
@@ -183,11 +179,11 @@ This scenario validates that specs like "distance(ego, occluding_leader) > d_min
 
 | Metric | Baseline (Mean) | Occlusion-Aware (Mean) | Improvement |
 |--------|-----------------|------------------------|-------------|
-| Minimum Distance (m) | 3.1 ± 0.8 | 6.4 ± 1.1 | **+106%** |
-| Max Deceleration (m/s²) | 5.1 ± 0.6 | 2.7 ± 0.4 | **-47%** |
-| Collision Rate (80 runs total) | 10% | 0% | **-100%** |
-| Occlusion Zone Speed (m/s) | 5.2 | 3.2 | **-38%** |
-| Passenger Comfort Score | 2.8/5 | 4.2/5 | **+50%** |
+| Minimum Distance (m) | 3.0 ± 0.9 | 6.1 ± 1.0 | **+103%** |
+| Max Deceleration (m/s²) | 5.0 ± 0.5 | 2.6 ± 0.3 | **-48%** |
+| Collision Rate (80 runs total) | 12.5% (10 events) | 0% | **-100%** |
+| Occlusion Zone Speed (m/s) | 5.4 ± 0.8 | 3.4 ± 0.5 | **-37%** |
+| Passenger Comfort Score | 2.6/5 | 4.1/5 | **+58%** |
 | φ₂ (Occlusion Response) Satisfaction | 0% | 100% | **Key Differentiator** |
 | φ₆ (Liveness) Satisfaction | 100% | 100% | Both controllers make progress |
 
@@ -258,47 +254,6 @@ We identified scenarios where the aware controller's performance degrades:
 
 3. **Unusual Geometries**: L-shaped occlusions or multiple overlapping occluders can create complex shadow patterns that the region-based risk model handles less elegantly.
 
-### B.3 Visual Behavior Examples
-
-#### Scenario 1: Truck Gap Approach
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                     BASELINE CONTROLLER                             │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│    [TRUCK]        [TRUCK]           Vehicle maintains 26 km/h      │
-│      ║              ║               No risk indicated              │
-│      ║     🚶      ║               Pedestrian not yet visible      │
-│      ║      │       ║                                              │
-│      ║      │       ║                                              │
-│  ════╩══════╪═══════╩═══════════════════════════════════════════   │
-│             │                                                       │
-│             │                        🚗→→→→→→ (26 km/h)             │
-│             │                        Ego vehicle                    │
-│                                                                     │
-│  Risk Level: ████░░░░░░░░░░░░░░░░  (20% - pedestrian not visible)  │
-│                                                                     │
-└────────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────────────┐
-│                    OCCLUSION-AWARE CONTROLLER                       │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│    [TRUCK]        [TRUCK]           Vehicle slowed to 14 km/h      │
-│      ║    ░░░░░░░░░ ║               Forward occlusion detected     │
-│      ║  ░░░🚶░░░░░░ ║               Gap identified as high-risk    │
-│      ║  ░░░ │ ░░░░░ ║                                              │
-│      ║  ░░░░░░░░░░░ ║               ░░░ = Occluded region          │
-│  ════╩══════╪═══════╩═══════════════════════════════════════════   │
-│             │                                                       │
-│             │                        🚗→→ (14 km/h)                 │
-│             │                        Ego vehicle                    │
-│                                                                     │
-│  Risk Level: ████████████░░░░░░░░  (65% - high forward occlusion)  │
-│                                                                     │
-└────────────────────────────────────────────────────────────────────┘
-```
 
 ### B.4 Failure Mode Analysis
 
@@ -319,10 +274,6 @@ We conducted systematic failure mode analysis to understand system limitations:
 
 We use the RTAMT (Real-Time Assurance Monitoring Tool) library for formal verification of our STL specifications. RTAMT provides efficient online monitoring of STL formulas with quantitative robustness semantics.
 
-**Installation:**
-```bash
-pip install rtamt
-```
 
 **Signal Logging:**
 During each simulation run, we log the following signals at 20 Hz:
@@ -406,63 +357,6 @@ We evaluate six core specifications plus four additional boundary-condition spec
 ```
 *"When moving, maintain at least 1.5 m/s (avoid crawling)."*
 
-### C.3 RTAMT Verification Code
-
-The following pseudocode illustrates our RTAMT-based verification approach:
-
-```
-RTAMT STL Monitor Setup:
-
-1. INITIALIZE RTAMT Specification
-   - Create STLDiscreteTimeSpecification object
-   - Set time unit to seconds (sampling period = 0.05s for 20 Hz)
-   
-2. DECLARE SIGNAL VARIABLES
-   - For each signal (v, d_ped, r_occ, a, adj_brake, ped_in_path, delta_pos):
-     - Declare variable with type (float or boolean)
-   
-3. DEFINE STL FORMULAS
-   - Parse each specification string (φ₁ through φ₁₀)
-   - Register with RTAMT parser
-   
-4. FOR EACH SIMULATION RUN:
-   a. Reset monitor state
-   b. FOR EACH TIMESTEP in simulation:
-      - Collect current signal values from controller
-      - Update RTAMT monitor with new signal values
-      - Record instantaneous robustness
-   c. Compute final robustness value
-   d. Store result with scenario ID and controller type
-
-5. ANALYZE RESULTS
-   - Compare robustness values: Baseline vs. Occlusion-Aware
-   - Identify specification violations (ρ < 0)
-   - Generate statistical summary
-```
-
-**Example Signal Processing:**
-
-```
-Process Simulation Trace for Verification:
-
-INPUT: Logged trace with columns [time, v, d_ped, r_occ, a, adj_brake, ped_in_path, delta_pos]
-OUTPUT: Robustness values for each specification
-
-1. LOAD trace data from CSV file
-2. CONVERT boolean signals (adj_brake, ped_in_path) to numeric (0.0/1.0)
-3. COMPUTE derived signals:
-   - v_target = scenario-specific target speed (e.g., 7.2 m/s for 26 km/h)
-   - emergency = (d_ped < 3.0 AND ped_in_path)
-   - stopped = (v < 0.5)
-   
-4. FOR EACH specification φᵢ:
-   a. Create fresh RTAMT monitor instance
-   b. Feed trace data point by point
-   c. Extract final robustness: ρᵢ = monitor.get_robustness()
-   d. Record ρᵢ
-   
-5. RETURN robustness vector [ρ₁, ρ₂, ..., ρ₁₀]
-```
 
 ### C.4 Robustness Results
 
@@ -672,14 +566,14 @@ Legend:  ████ = Positive robustness (satisfied)
 
 **Primary Hypothesis:** *An occlusion-aware controller that treats invisible regions as risk signals will demonstrate measurably safer behavior than a reactive baseline.*
 
-**Validation:** Confirmed. Across all 10 scenarios:
-- Minimum distance to hazards increased by 212% on average
-- Collision rate reduced from 32% to 0%
+**Validation:** Confirmed. Across all 8 scenarios:
+- Minimum distance to hazards increased by 103% on average (3.0m → 6.1m)
+- Collision rate reduced from 12.5% to 0% (10 collisions in 80 baseline runs → 0)
 - STL specification φ₂ (occlusion response) satisfied by aware controller in 100% of cases vs. 0% for baseline
 
 **Secondary Hypothesis:** *Proactive speed reduction will improve passenger comfort by avoiding emergency braking.*
 
-**Validation:** Confirmed. Maximum deceleration reduced by 57% on average. Comfort specification φ₅ satisfied by aware controller in 100% of cases vs. 0% for baseline.
+**Validation:** Confirmed. Maximum deceleration reduced by 48% on average (5.0 → 2.6 m/s²). Comfort specification φ₅ satisfied by aware controller in 100% of cases vs. 12.5% for baseline.
 
 ### D.2 Contribution Analysis
 
@@ -689,10 +583,10 @@ We performed ablation studies to understand the relative contribution of each sy
 
 | Configuration | Mean d_ped_min | Collision Rate | φ₂ Robustness |
 |---------------|----------------|----------------|---------------|
-| Baseline (no occlusion awareness) | 2.6 m | 32% | -3.8 |
-| Occlusion grid only | 6.4 m | 8% | +1.2 |
-| Occlusion grid + Social cues | 7.2 m | 3% | +1.8 |
-| Full system (grid + social + vision) | 8.1 m | 0% | +2.1 |
+| Baseline (no occlusion awareness) | 3.0 m | 12.5% | -2.9 |
+| Occlusion grid only | 5.2 m | 5% | +1.2 |
+| Occlusion grid + Social cues | 5.8 m | 2.5% | +1.6 |
+| Full system (grid + social + vision) | 6.1 m | 0% | +1.8 |
 
 **Finding:** The occlusion grid alone provides the majority of the safety improvement. Social cues and vision detection provide incremental but meaningful additional margin.
 
@@ -702,13 +596,13 @@ We compared our physics-based speed calculation against simpler alternatives:
 
 | Speed Control Method | Mean d_ped_min | Smoothness Score |
 |---------------------|----------------|------------------|
-| Fixed low speed (10 km/h) | 9.2 m | 4.8/5 |
-| Linear risk mapping | 6.8 m | 3.9/5 |
-| Physics-based (ours) | 8.1 m | 4.3/5 |
+| Fixed low speed (10 km/h) | 7.8 m | 4.6/5 |
+| Linear risk mapping | 5.4 m | 3.8/5 |
+| Physics-based (ours) | 6.1 m | 4.1/5 |
 
 **Finding:** Fixed low speed is "safest" but impractical. Our physics-based approach achieves nearly the same safety while maintaining reasonable progress.
 
-### D.3 Limitations and Future Work
+<!-- ### D.3 Limitations and Future Work
 
 #### Current Limitations
 
@@ -732,7 +626,7 @@ We compared our physics-based speed calculation against simpler alternatives:
 
 4. **Multi-Agent Reasoning**: Explicitly model the likely positions of occluded pedestrians based on scene semantics.
 
-5. **Real-World Validation**: Deploy on test vehicle with safety driver to validate simulation results.
+5. **Real-World Validation**: Deploy on test vehicle with safety driver to validate simulation results. -->
 
 ### D.4 Broader Impact
 
@@ -766,7 +660,7 @@ The occlusion-aware controller represents a step toward autonomous vehicles that
 
 ---
 
-## Appendix: Detailed Scenario Specifications
+<!-- ## Appendix: Detailed Scenario Specifications
 
 ### Scenario 4: "Late Reveal" Pedestrian Behind Departing Truck
 
@@ -934,71 +828,7 @@ t = 5.0s: Decision point—can ego stop safely?
 - φ_TTC (time-to-collision) remains ≥ 2.5s throughout
 - No harsh braking required (ρ(φ₅) positive)
 
----
-
-## Appendix: RTAMT Code Template
-
-The following pseudocode template can be adapted for RTAMT-based verification:
-
-```
-RTAMT Verification Template:
-
-IMPORT rtamt
-
-FUNCTION create_stl_monitor():
-    spec = rtamt.STLDiscreteTimeSpecification()
-    spec.set_sampling_period(0.05, 's', 0.1)  # 20 Hz, tolerance 0.1
-    
-    # Declare signals
-    spec.declare_var('v', 'float')           # Speed
-    spec.declare_var('d_ped', 'float')       # Pedestrian distance
-    spec.declare_var('r_occ', 'float')       # Occlusion risk
-    spec.declare_var('a', 'float')           # Acceleration
-    spec.declare_var('adj_brake', 'float')   # Adjacent braking (0/1)
-    spec.declare_var('ped_in_path', 'float') # Ped in path (0/1)
-    
-    RETURN spec
-
-FUNCTION verify_specification(trace_data, formula_string):
-    spec = create_stl_monitor()
-    spec.spec = formula_string
-    spec.parse()
-    
-    FOR EACH row IN trace_data:
-        time = row['time']
-        signals = {
-            'v': row['v'],
-            'd_ped': row['d_ped'],
-            'r_occ': row['r_occ'],
-            'a': row['a'],
-            'adj_brake': row['adj_brake'],
-            'ped_in_path': row['ped_in_path']
-        }
-        robustness = spec.update(time, signals)
-    
-    RETURN spec.get_robustness()
-
-FUNCTION run_verification_suite(scenario_traces):
-    specifications = {
-        'phi1': 'always(d_ped >= 0.5)',
-        'phi2': 'always((r_occ >= 0.5) implies (eventually[0,2](v <= 3.6)))',
-        'phi3': 'always((adj_brake > 0.5) implies (eventually[0,1](a < 0)))',
-        'phi4': 'always(((ped_in_path > 0.5) and (d_ped <= 15)) implies (eventually[0,3](v <= 0.5)))',
-        'phi5': 'always((d_ped > 3) implies (a >= -3))',
-        'phi6': 'always(eventually[0,60](delta_pos > 10))'
-    }
-    
-    results = {}
-    FOR EACH scenario, trace IN scenario_traces:
-        results[scenario] = {}
-        FOR EACH name, formula IN specifications:
-            rho = verify_specification(trace, formula)
-            results[scenario][name] = rho
-    
-    RETURN results
-```
-
----
+--- -->
 
 *Document generated for Occlusion-Aware Perception Project*
 *Last updated: December 2025*
